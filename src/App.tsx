@@ -1,14 +1,17 @@
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from './app/AuthProvider';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Routes } from './routes';
 
-/** Application root: routing plus the Firebase authentication context. */
+/** Application root: render-crash guard, routing, and the Firebase auth context. */
 export function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <Routes />
-      </AuthProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes />
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

@@ -182,7 +182,9 @@ export async function acceptViaDispatch(
         if (code.includes('not-found')) return 'offer-missing';
         return 'error';
       }
-      // Functions not deployed yet — fall through to the guarded direct path.
+      // Functions unreachable (not deployed / offline) — there is no client
+      // fallback: assignment is server-only, so surface a plain error the
+      // UI can explain as "try again later".
     }
   }
   return 'error';

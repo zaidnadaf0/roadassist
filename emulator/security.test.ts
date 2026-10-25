@@ -249,9 +249,12 @@ describe('mechanic approval boundary', () => {
     );
   });
 
-  it('approved mechanic accepts in-window', async () => {
+  it('approved mechanic cannot accept by direct write — callable-only', async () => {
+    // Assignment is server-only: even an approved mechanic holding a valid,
+    // in-window offer is denied a client-direct accept. The callable path
+    // revalidates everything server-side (proven in dispatchTx.test.ts).
     const db = ctx(MEG).firestore();
-    await assertSucceeds(
+    await assertFails(
       updateDoc(doc(db, 'requests', 'req-open-1'), {
         status: 'accepted',
         mechanicId: MEG,

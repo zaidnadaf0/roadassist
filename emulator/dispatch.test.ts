@@ -126,14 +126,13 @@ describe('offer-pool rules matrix (M8)', () => {
     );
   });
 
-  it('CONCURRENCY: two eligible mechanics race one request — single assignment stands', async () => {
-    // HONEST PROPERTY of the direct-write path: Firestore serializes the
-    // writes so the document ends with EXACTLY ONE assignment (last writer
-    // wins), but both racers may observe success — the loser is NOT safely
-    // rejected. True first-win (loser gets alreadyTaken) lives in the
-    // server transaction (acceptOfferTx, proven in dispatchTx.test.ts),
-    // which is why the M8 client prefers the callable. This test pins the
-    // direct path's real guarantee: no double assignment, never a torn write.
+  it('CONCURRENCY: client-direct assignment is denied — only the callable accepts', async () => {
+    // Two eligible mechanics race the SAME open request with client-direct
+    // writes. Under the server-only-accept rules BOTH writes are denied:
+    // there is no last-writer-wins window left to exploit, and the request
+    // stays open and unassigned. The true first-win race (exactly one
+    // winner, losers rejected with alreadyTaken) lives in the server
+    // transaction, proven in dispatchTx.test.ts.
     const aDb = testEnv.authenticatedContext(A).firestore();
     const bDb = testEnv.authenticatedContext(B).firestore();
     const accept = (db: ReturnType<typeof aDb>, uid: string, name: string) =>
@@ -141,24 +140,17 @@ describe('offer-pool rules matrix (M8)', () => {
         status: 'accepted', mechanicId: uid, mechanicName: name, updatedAt: serverTimestamp(),
       });
     const [ra, rb] = await Promise.allSettled([accept(aDb, A, 'm8-racer-a'), accept(bDb, B, 'm8-racer-b')]);
-    expect([ra, rb].filter((r) => r.status === 'fulfilled').length).toBeGreaterThanOrEqual(1);
+    expect(ra.status).toBe('rejected');
+    expect(rb.status).toBe('rejected');
     // Final state is read with rules disabled: it is test introspection, not
-    // an access assertion (the loser legitimately loses read access on a win).
+    // an access assertion.
     let final: Record<string, unknown> = {};
     await testEnv.withSecurityRulesDisabled(async (adminCtx) => {
       const snap = await getDoc(doc(adminCtx.firestore(), 'requests', 'm8-req-race'));
       final = (snap.data() ?? {}) as Record<string, unknown>;
     });
-    expect(final.status).toBe('accepted');
-    expect([A, B]).toContain(final.mechanicId as string);
-    // A subsequent accept on the now-assigned request is always denied.
-    const loserDb = final.mechanicId === A ? bDb : aDb;
-    const loserId = final.mechanicId === A ? B : A;
-    await assertFails(
-      updateDoc(doc(loserDb, 'requests', 'm8-req-race'), {
-        status: 'accepted', mechanicId: loserId, mechanicName: loserId, updatedAt: serverTimestamp(),
-      }),
-    );
+    expect(final.status).toBe('requested');
+    expect(final.mechanicId == null || final.mechanicId === '').toBe(true);
   });
 
   it('rejects cross-mechanic and no-offer direct assignment attempts', async () => {

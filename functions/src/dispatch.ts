@@ -325,3 +325,55 @@ export async function expireStaleOffers(db: Firestore, requestId: string, nowMs:
   if (n > 0) await batch.commit();
   return n;
 }
+
+/**
+ * Close every still-pending offer on an accepted request. The normal accept
+ * path supersedes siblings inside acceptOfferTx, so this is a no-op there —
+ * it exists for out-of-band transitions (e.g. claim-admin writes) that would
+ * otherwise leave phantom pending offers live in mechanic queues.
+ */
+export async function supersedePendingOffers(db: Firestore, requestId: string): Promise<number> {
+  const pending = await db
+    .collection('requests')
+    .doc(requestId)
+    .collection('offers')
+    .where('status', '==', 'pending')
+    .get();
+  if (pending.empty) return 0;
+  const batch = db.batch();
+  for (const d of pending.docs) {
+    batch.update(d.ref, { status: 'superseded', updatedAt: FieldValue.serverTimestamp() });
+  }
+  await batch.commit();
+  return pending.size;
+}
+
+/**
+ * Per-request sweep step for one open, unassigned request: expire stale
+ * pending offers and rematch — including the stranded case where the request
+ * has NO offers at all (no eligible mechanic at creation, or the initial
+ * batch failed). A request with live pending offers is left alone, and the
+ * rematch budget (rematchRound) still bounds how long a permanently
+ * unmatched request keeps polling.
+ */
+export async function sweepRequest(
+  db: Firestore,
+  requestId: string,
+  nowMs: number,
+): Promise<{ expired: number; rematched: boolean }> {
+  const ref = db.collection('requests').doc(requestId);
+  const expired = await expireStaleOffers(db, requestId, nowMs);
+  if (expired > 0) {
+    await rematchRequest(db, requestId);
+    return { expired, rematched: true };
+  }
+  const snap = await ref.get();
+  const round = (snap.exists ? (snap.data() as ServiceRequest & { rematchRound?: number }).rematchRound : 0) ?? 0;
+  if (round >= MAX_REMATCH_ROUNDS) return { expired: 0, rematched: false };
+  const pending = await ref.collection('offers').where('status', '==', 'pending').limit(1).get();
+  if (pending.empty) {
+    await rematchRequest(db, requestId);
+    return { expired: 0, rematched: true };
+  }
+  return { expired: 0, rematched: false };
+}

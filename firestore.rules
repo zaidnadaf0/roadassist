@@ -96,15 +96,47 @@ service cloud.firestore {
         && isCustomer()
         && request.resource.data.keys().hasOnly(['ownerId', 'make', 'model', 'year', 'plate', 'type', 'isDefault', 'createdAt'])
         && request.resource.data.make is string
+        && request.resource.data.make.size() >= 1
+        && request.resource.data.make.size() <= 100
         && request.resource.data.model is string
+        && request.resource.data.model.size() >= 1
+        && request.resource.data.model.size() <= 100
         && request.resource.data.plate is string
+        && request.resource.data.plate.size() >= 1
+        && request.resource.data.plate.size() <= 20
         && request.resource.data.year is number
+        && request.resource.data.year >= 1900
+        && request.resource.data.year <= 2100
         && request.resource.data.type in ['car', 'bike', 'van', 'truck']
         && (!('isDefault' in request.resource.data) || request.resource.data.isDefault is bool);
       // ownerId frozen: ownership can never be transferred by rewrite.
+      // Updates may edit only the bounded profile fields create allows —
+      // no key injection and no document-size abuse on the update path.
       allow update: if isSignedIn()
         && resource.data.ownerId == request.auth.uid
-        && request.resource.data.ownerId == resource.data.ownerId;
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['make', 'model', 'year', 'plate', 'type', 'isDefault'])
+        && (!('make' in request.resource.data)
+            || (request.resource.data.make is string
+                && request.resource.data.make.size() >= 1
+                && request.resource.data.make.size() <= 100))
+        && (!('model' in request.resource.data)
+            || (request.resource.data.model is string
+                && request.resource.data.model.size() >= 1
+                && request.resource.data.model.size() <= 100))
+        && (!('plate' in request.resource.data)
+            || (request.resource.data.plate is string
+                && request.resource.data.plate.size() >= 1
+                && request.resource.data.plate.size() <= 20))
+        && (!('year' in request.resource.data)
+            || (request.resource.data.year is number
+                && request.resource.data.year >= 1900
+                && request.resource.data.year <= 2100))
+        && (!('type' in request.resource.data)
+            || request.resource.data.type in ['car', 'bike', 'van', 'truck'])
+        && (!('isDefault' in request.resource.data)
+            || request.resource.data.isDefault is bool);
       allow delete: if isSignedIn()
         && resource.data.ownerId == request.auth.uid;
     }
@@ -257,24 +289,13 @@ service cloud.firestore {
             .hasOnly(['status', 'mechanicId', 'mechanicName', 'mechanicPhone', 'mechanicLat',
                       'mechanicLng', 'mechanicLocationUpdatedAt', 'offerExpiresAt', 'releaseReason', 'releasedAt', 'updatedAt']);
 
-      // First assignment: approved mechanic claims an open offer in-window.
-      allow update: if resource.data.status == 'requested'
-        && request.resource.data.status == 'accepted'
-        && (resource.data.mechanicId == null || resource.data.mechanicId == '')
-        && request.resource.data.mechanicId == request.auth.uid
-        && request.resource.data.mechanicName is string
-        && request.resource.data.mechanicName.size() >= 1
-        && request.resource.data.mechanicName.size() <= 120
-        && request.resource.data.offerExpiresAt is timestamp
-        && request.time < request.resource.data.offerExpiresAt
-        && isMechanicApproved()
-        && hasValidOffer(id)
-        && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['status', 'mechanicId', 'mechanicName', 'etaMin', 'updatedAt'])
-        && (!('etaMin' in request.resource.data)
-            || (request.resource.data.etaMin is number
-                && request.resource.data.etaMin >= 1
-                && request.resource.data.etaMin <= 180));
+      // Assignment is SERVER-ONLY. The former client-direct "first
+      // assignment" branch was removed: a rules-allowed direct accept cannot
+      // enforce the active-job cap, server-clock expiry, or first-win
+      // semantics (last writer won the race). Every accept now travels
+      // through the `acceptOffer` callable transaction (functions/src/dispatch.ts),
+      // revalidated server-side. Clients writing status/mechanicId directly
+      // are denied here.
 
       // Admin operations remain explicit and independent of user branches.
       allow update: if isClaimAdmin();
@@ -396,8 +417,9 @@ service cloud.firestore {
     // Offer docs are written ONLY by trusted backend (Admin SDK bypasses
     // rules; callables re-validate everything server-side). Clients can
     // never create, modify, or delete offers — accept/decline travel through
-    // the callables, and the M3 request-level branches remain as the
-    // always-on guard.
+    // the callables, and the request-level decline branch remains as the
+    // always-on guard for the decline path. Direct accepts are denied (see
+    // the requests block: assignment is server-only).
     //
     // The recursive wildcard is REQUIRED: collection-group queries (the
     // mechanic queue, admin dispatch) never match a concrete

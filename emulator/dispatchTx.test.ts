@@ -17,6 +17,8 @@ import {
   declineOfferTx,
   expireStaleOffers,
   rematchRequest,
+  supersedePendingOffers,
+  sweepRequest,
 } from '../functions/src/dispatch';
 
 // NOTE: seeds below MUST use Admin-SDK sentinels (FieldValue/Timestamp from
@@ -185,5 +187,84 @@ describe('server dispatch transactions (M8)', () => {
       round: 0,
     });
     expect(await acceptOfferTx(db, 'm8t-req-active-limit', 'm8t-a', Date.now())).toBe('ineligible');
+  });
+});
+
+describe('sweep + supersede (stranded-request and phantom-offer fixes)', () => {
+  const openStranded = (id: string, extra: Record<string, unknown> = {}) =>
+    db.collection('requests').doc(id).set({
+      id,
+      customerId: 'm8t-cust',
+      vehicleId: 'm8t-veh-1',
+      problemText: 'M8 sweep probe request payload',
+      customerLat: 12.9716,
+      customerLng: 77.5946,
+      status: 'requested',
+      offerExpiresAt: Timestamp.fromMillis(Date.now() + 120_000),
+      mechanicId: null,
+      ...(extra as Record<string, unknown>),
+    });
+  const seedOffer = (id: string, mechanicId: string, status: 'pending' | 'superseded' = 'pending') =>
+    db.collection('requests').doc(id).collection('offers').doc(mechanicId).set({
+      requestId: id,
+      customerId: 'm8t-cust',
+      mechanicId,
+      mechanicName: mechanicId,
+      expiresAt: Timestamp.fromMillis(Date.now() + 120_000),
+      status,
+      round: 0,
+    });
+
+  it('sweep rematches a stranded request that has zero offers', async () => {
+    // Created while no mechanic was eligible (or the initial batch failed):
+    // the old sweep never revisited these. Now the first sweep step re-opens
+    // a batch, and eligible mechanics receive real offers.
+    await openStranded('m8t-req-stranded');
+    const res = await sweepRequest(db, 'm8t-req-stranded', Date.now());
+    expect(res.rematched).toBe(true);
+    const offers = await db.collection('requests').doc('m8t-req-stranded').collection('offers').get();
+    expect(offers.size).toBeGreaterThanOrEqual(1);
+    for (const d of offers.docs) expect(d.data().status).toBe('pending');
+  });
+
+  it('sweep leaves a request with live pending offers alone', async () => {
+    await openStranded('m8t-req-live');
+    await seedOffer('m8t-req-live', 'm8t-b');
+    const res = await sweepRequest(db, 'm8t-req-live', Date.now());
+    expect(res.rematched).toBe(false);
+    const offer = await db.collection('requests').doc('m8t-req-live').collection('offers').doc('m8t-b').get();
+    expect(offer.data()?.status).toBe('pending');
+  });
+
+  it('sweep stops rematch once the round budget is exhausted', async () => {
+    await openStranded('m8t-req-exhausted', { rematchRound: 5 });
+    const res = await sweepRequest(db, 'm8t-req-exhausted', Date.now());
+    expect(res.rematched).toBe(false);
+    const offers = await db.collection('requests').doc('m8t-req-exhausted').collection('offers').get();
+    expect(offers.empty).toBe(true);
+  });
+
+  it('supersedePendingOffers closes leftover pending offers exactly once', async () => {
+    // An out-of-band accept (e.g. claim-admin write) left siblings pending:
+    // the defense-in-depth trigger step closes them so no phantom jobs stay
+    // live in mechanic queues.
+    await db.collection('requests').doc('m8t-req-phantom').set({
+      id: 'm8t-req-phantom',
+      customerId: 'm8t-cust',
+      vehicleId: 'm8t-veh-1',
+      problemText: 'M8 phantom-offer probe request payload',
+      customerLat: 12.9716,
+      customerLng: 77.5946,
+      status: 'accepted',
+      offerExpiresAt: Timestamp.fromMillis(Date.now() + 120_000),
+      mechanicId: 'm8t-a',
+      mechanicName: 'm8t-a',
+    });
+    await seedOffer('m8t-req-phantom', 'm8t-a');
+    await seedOffer('m8t-req-phantom', 'm8t-b');
+    expect(await supersedePendingOffers(db, 'm8t-req-phantom')).toBe(2);
+    const offers = await db.collection('requests').doc('m8t-req-phantom').collection('offers').get();
+    for (const d of offers.docs) expect(d.data().status).toBe('superseded');
+    expect(await supersedePendingOffers(db, 'm8t-req-phantom')).toBe(0);
   });
 });

@@ -148,7 +148,7 @@ export function AdminRequestDetailPage() {
                 <div className="flex justify-between gap-4"><dt className="text-steel-400">Problem</dt><dd className="text-right font-medium text-cream">{request.problemText}</dd></div>
                 <div className="flex justify-between gap-4"><dt className="text-steel-400">Vehicle</dt><dd className="text-right font-medium text-cream">{vehicle ? `${vehicle.make} ${vehicle.model} · ${vehicle.plate}` : 'Unavailable'}</dd></div>
                 <div className="flex justify-between gap-4"><dt className="text-steel-400">Mechanic</dt><dd className="font-medium text-cream">{request.mechanicName ?? request.mechanicId ?? 'Unassigned'}</dd></div>
-                <div className="flex justify-between gap-4"><dt className="text-steel-400">Coordinates</dt><dd className="font-mono text-xs text-cream">{request.customerLat.toFixed(5)}, {request.customerLng.toFixed(5)}</dd></div>
+                <div className="flex justify-between gap-4"><dt className="text-steel-400">Coordinates</dt><dd className="font-mono text-xs text-cream">{typeof request.customerLat === 'number' ? request.customerLat.toFixed(5) : '—'}, {typeof request.customerLng === 'number' ? request.customerLng.toFixed(5) : '—'}</dd></div>
                 {request.amountCents != null && <div className="flex justify-between"><dt className="text-steel-400">Amount</dt><dd className="font-medium text-cream">₹{(request.amountCents / 100).toFixed(0)}</dd></div>}
                 {request.rating != null && <div className="flex justify-between"><dt className="text-steel-400">Rating</dt><dd className="font-medium text-cream">★ {request.rating}</dd></div>}
               </dl>

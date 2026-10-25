@@ -37,6 +37,7 @@ export function MechanicGuidePage() {
   const navigate = useNavigate();
   const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
   const [vehiclesError, setVehiclesError] = useState(false);
+  const [vehiclesRetry, setVehiclesRetry] = useState(0);
   const [selectedVehicle, setSelectedVehicle] = useState('');
   const [problemText, setProblemText] = useState('');
   const [place, setPlace] = useState('');
@@ -75,7 +76,7 @@ export function MechanicGuidePage() {
       .then((items) => { if (!cancelled) setVehicles(items); })
       .catch(() => { if (!cancelled) { setVehicles([]); setVehiclesError(true); } });
     return () => { cancelled = true; };
-  }, [demoMode, demoRevision, user?.uid]);
+  }, [demoMode, demoRevision, vehiclesRetry, user?.uid]);
 
   const draft: GuideDraft = {
     vehicleId: selectedVehicle,
@@ -198,7 +199,7 @@ export function MechanicGuidePage() {
   }
 
   if (vehicles === null) return <LoadingState label="Loading your vehicles…" />;
-  if (vehiclesError) return <ErrorState title="Your vehicles could not be loaded" description="The live vehicle feed is unavailable. Try again, or switch to Demo mode for a local presentation." action={<Button onClick={() => setVehicles(null)}>Try again</Button>} />;
+  if (vehiclesError) return <ErrorState title="Your vehicles could not be loaded" description="The live vehicle feed is unavailable. Try again, or switch to Demo mode for a local presentation." action={<Button onClick={() => { setVehiclesError(false); setVehiclesRetry((n) => n + 1); }}>Try again</Button>} />;
   if (vehicles.length === 0) return <EmptyState title="Add a vehicle first" description="The guide needs one of your saved vehicles before it can prepare a request." />;
 
   return (

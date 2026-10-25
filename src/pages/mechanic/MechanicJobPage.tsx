@@ -68,6 +68,18 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
 
   async function advance() {
     if (!next) return;
+    let extra: { amountCents?: number; durationMin?: number } | undefined;
+    if (next === 'completed') {
+      // Validate billing before submit: a typo like "4 9" would silently
+      // become NaN and the transaction would complete with no amount.
+      const cents = amount.trim() ? Math.round(Number(amount) * 100) : null;
+      const mins = duration.trim() ? Math.round(Number(duration)) : null;
+      if ((cents != null && !Number.isFinite(cents)) || (mins != null && !Number.isFinite(mins))) {
+        setNotice('Billing fields must be plain numbers (e.g. 499.00 and 25). Nothing was submitted.');
+        return;
+      }
+      extra = { ...(cents != null ? { amountCents: cents } : {}), ...(mins != null ? { durationMin: mins } : {}) };
+    }
     setBusy(true);
     if (demoMode) {
       const updated = advanceDemoRequest(job.id, next);
@@ -78,13 +90,6 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
       } else setNotice('Demo job could not be updated.');
       return;
     }
-    const extra =
-      next === 'completed'
-        ? {
-            ...(amount.trim() ? { amountCents: Math.round(Number(amount) * 100) } : {}),
-            ...(duration.trim() ? { durationMin: Math.round(Number(duration)) } : {}),
-          }
-        : undefined;
     const res = await advanceJob(job.id, next, extra);
     setBusy(false);
     setNotice(
@@ -133,7 +138,7 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
         </div>
         <dl className="mt-3 grid gap-1.5 text-sm">
           <div className="flex justify-between"><dt className="text-steel-400">Category</dt><dd className="font-medium text-cream">{job.problemCategory ?? 'general'}</dd></div>
-          <div className="flex justify-between"><dt className="text-steel-400">Customer location</dt><dd className="font-mono text-xs text-cream">{job.customerLat.toFixed(4)}, {job.customerLng.toFixed(4)}</dd></div>
+          <div className="flex justify-between"><dt className="text-steel-400">Customer location</dt><dd className="font-mono text-xs text-cream">{typeof job.customerLat === 'number' ? job.customerLat.toFixed(4) : '—'}, {typeof job.customerLng === 'number' ? job.customerLng.toFixed(4) : '—'}</dd></div>
           {job.etaMin != null && (
             <div className="flex justify-between"><dt className="text-steel-400">Committed ETA</dt><dd className="font-medium text-cream">{job.etaMin} min</dd></div>
           )}

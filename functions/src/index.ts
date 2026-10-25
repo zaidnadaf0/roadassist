@@ -2,7 +2,7 @@ import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import type { MechanicProfile, ServiceRequest } from './types';
 import { buildPublicProjection } from './projection';
-import { acceptOfferTx, createOfferBatch, declineOfferTx, expireStaleOffers, rematchRequest } from './dispatch';
+import { acceptOfferTx, createOfferBatch, declineOfferTx, rematchRequest, supersedePendingOffers, sweepRequest } from './dispatch';
 import { noticeForOffer, noticesForTransition, putNotification } from './notifications';
 
 admin.initializeApp();
@@ -56,8 +56,30 @@ export const onRequestWrite = functions.firestore
     await maybeAggregateRating(requestId, before, after);
     await maybeAttachMechanicPhone(requestId, before, after);
     await maybeClearMechanicLiveLocation(requestId, before, after);
+    await maybeSupersedeOnAccept(requestId, before, after);
     await maybeNotifyTransition(before, after);
   });
+
+/**
+ * Defense in depth: when a request flips to `accepted`, close any offer
+ * still pending. acceptOfferTx already supersedes siblings inside its
+ * transaction (so this is a no-op on the normal path); out-of-band accept
+ * paths (e.g. claim-admin console edits) would otherwise leave phantom
+ * pending offers live in every mechanic's queue.
+ */
+async function maybeSupersedeOnAccept(
+  requestId: string,
+  before: ServiceRequest,
+  after: ServiceRequest,
+): Promise<void> {
+  if (after.status !== 'accepted' || before.status === 'accepted') return;
+  try {
+    const n = await supersedePendingOffers(db, requestId);
+    if (n > 0) console.log(`[dispatch] ${requestId}: superseded ${n} leftover pending offer(s) on accept`);
+  } catch (err) {
+    console.error(`[dispatch] ${requestId}: supersede-on-accept failed:`, err);
+  }
+}
 
 /** Fan out idempotent lifecycle notices (never throws into dispatch). */
 async function maybeNotifyTransition(before: ServiceRequest, after: ServiceRequest): Promise<void> {
@@ -278,8 +300,7 @@ export const scheduledOfferSweep = functions.pubsub
     if (open.empty) return;
     for (const d of open.docs) {
       try {
-        const expired = await expireStaleOffers(db, d.id, now);
-        if (expired > 0) await rematchRequest(db, d.id);
+        await sweepRequest(db, d.id, now);
       } catch (err) {
         console.error(`[dispatch] sweep ${d.id} failed:`, err);
       }

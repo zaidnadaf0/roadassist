@@ -29,7 +29,7 @@ function ActiveJobCard({ job, preview = false }: { job: ServiceRequest; preview?
         <div>
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-safety-400">Active job · #{job.id.slice(-6).toUpperCase()}</p>
           <h2 className="mt-2 text-xl font-bold text-cream">{job.problemText}</h2>
-          <p className="mt-1 text-sm text-steel-300">{job.problemCategory ?? 'Roadside assistance'} · {job.customerLat.toFixed(3)}, {job.customerLng.toFixed(3)}</p>
+          <p className="mt-1 text-sm text-steel-300">{job.problemCategory ?? 'Roadside assistance'} · {typeof job.customerLat === 'number' ? job.customerLat.toFixed(3) : '—'}, {typeof job.customerLng === 'number' ? job.customerLng.toFixed(3) : '—'}</p>
         </div>
         <Badge tone={statusTone(job.status)}>{job.status.replace('-', ' ')}</Badge>
       </div>

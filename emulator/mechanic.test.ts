@@ -84,6 +84,17 @@ function mechDb() {
   return testEnv.authenticatedContext(MECH).firestore();
 }
 
+/** Seeds an accepted assignment with rules disabled — test introspection
+ * mirroring what acceptOfferTx commits server-side (clients cannot write
+ * this state directly under the server-only-accept rules). */
+async function forceAccepted(id: string) {
+  await testEnv.withSecurityRulesDisabled(async (adminCtx) => {
+    await updateDoc(doc(adminCtx.firestore(), 'requests', id), {
+      status: 'accepted', mechanicId: MECH, mechanicName: 'M Five Motors', updatedAt: serverTimestamp(),
+    });
+  });
+}
+
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
@@ -101,17 +112,23 @@ afterAll(async () => {
 });
 
 describe('mechanic job lifecycle (M5 vs M3 rules)', () => {
-  it('sees the open queue and accepts in-window', async () => {
+  it('sees the open queue; accept travels only through the server callable', async () => {
     const db = mechDb();
-    const ref = doc(db, 'requests', 'm5-req-accept');
-    const before = await getDoc(ref);
+    const before = await getDoc(doc(db, 'requests', 'm5-req-accept'));
     expect(before.data()?.status).toBe('requested');
-    await assertSucceeds(
-      updateDoc(ref, { status: 'accepted', mechanicId: MECH, mechanicName: 'M Five Motors', updatedAt: serverTimestamp() }),
+    // Even a valid, in-window offer cannot be claimed by a client-direct
+    // write: assignment is server-only. The transaction path is proven in
+    // dispatchTx.test.ts.
+    await assertFails(
+      updateDoc(doc(db, 'requests', 'm5-req-accept'), {
+        status: 'accepted', mechanicId: MECH, mechanicName: 'M Five Motors', updatedAt: serverTimestamp(),
+      }),
     );
   });
 
   it('cannot accept an expired offer', async () => {
+    // Denial is structural (no client accept path at all); this keeps the
+    // expired-offer case pinned for defense in depth.
     const db = mechDb();
     await assertFails(
       updateDoc(doc(db, 'requests', 'm5-req-expired'), {
@@ -131,7 +148,7 @@ describe('mechanic job lifecycle (M5 vs M3 rules)', () => {
   it('releases an assigned job back to the queue with audit fields', async () => {
     const db = mechDb();
     const ref = doc(db, 'requests', 'm5-req-release');
-    await updateDoc(ref, { status: 'accepted', mechanicId: MECH, mechanicName: 'M Five Motors', updatedAt: serverTimestamp() });
+    await forceAccepted('m5-req-release');
     await assertSucceeds(
       updateDoc(ref, {
         status: 'requested',
@@ -154,7 +171,7 @@ describe('mechanic job lifecycle (M5 vs M3 rules)', () => {
   it('advances along the canonical chain and completes with billing', async () => {
     const db = mechDb();
     const ref = doc(db, 'requests', 'm5-req-complete');
-    await updateDoc(ref, { status: 'accepted', mechanicId: MECH, mechanicName: 'M Five Motors', updatedAt: serverTimestamp() });
+    await forceAccepted('m5-req-complete');
     for (const s of ['on-the-way', 'arrived', 'service'] as const) {
       await assertSucceeds(updateDoc(ref, { status: s, updatedAt: serverTimestamp() }));
     }

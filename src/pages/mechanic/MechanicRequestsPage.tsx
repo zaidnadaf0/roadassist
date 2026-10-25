@@ -9,6 +9,12 @@ import { acceptDemoOffer, declineDemoOffer, getDemoMechanicIncoming, getDemoOffe
 
 function OfferCard({ job, offer, demoMode, onDone }: { job: ServiceRequest; offer?: OfferView; demoMode: boolean; onDone: (msg: string) => void }) {
   const [busy, setBusy] = useState(false);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!offer) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [offer]);
   const countdown = offerCountdown(offer?.expiresAtMs ?? null);
 
   async function accept() {
@@ -132,7 +138,16 @@ export function MechanicRequestsPage() {
         ) : (
           <div className="grid gap-3">
             {ordered.map((j) => (
-              <OfferCard key={j.id} job={j} offer={offerByRequest.get(j.id)} demoMode={demoMode} onDone={(message) => { setNotice(message); setJobs(getDemoMechanicIncoming()); setOffers(getDemoOfferHistory().filter((item) => item.status === 'pending')); }} />
+              <OfferCard key={j.id} job={j} offer={offerByRequest.get(j.id)} demoMode={demoMode} onDone={(message) => {
+                setNotice(message);
+                // Only demo state is reset here: in live mode the onSnapshot
+                // listeners own the feed, and stamping demo fixtures over it
+                // after a failed call would corrupt the real queue.
+                if (demoMode) {
+                  setJobs(getDemoMechanicIncoming());
+                  setOffers(getDemoOfferHistory().filter((item) => item.status === 'pending'));
+                }
+              }} />
             ))}
           </div>
         )}

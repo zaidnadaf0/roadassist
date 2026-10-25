@@ -98,19 +98,22 @@ function record(id, label, pass, detail) {
     && /request\.resource\.data\.mechanicName\s*==\s*resource\.data\.mechanicName/.test(body);
   record('R007', 'mechanic advance freezes mechanicId/mechanicName', pass, pass ? null : 'identity freeze missing');
 }
-// R008/R009/R010 — first assignment: branch + window + key allowlist
+// R008/R009/R010 — server-only assignment: no client-direct accept branch,
+// release branch keeps its offer window, vehicles update stays allowlisted.
 {
   const body = updateBody(matchBlock('requests/{id}'));
-  const branch = /request\.resource\.data\.status\s*==\s*'accepted'/.test(body);
+  const noDirectAccept = !/request\.resource\.data\.status\s*==\s*'accepted'/.test(body);
+  record('R008', 'no client-direct accept branch (assignment is callable-only)', noDirectAccept, noDirectAccept ? null : 'client-direct accept branch present');
   const window = /request\.time\s*<\s*request\.resource\.data\.offerExpiresAt/.test(body);
-  const keys = /\.hasOnly\(\['status',\s*'mechanicId',\s*'mechanicName',\s*'etaMin',\s*'updatedAt'\]\)/.test(body);
-  record('R008', 'first-assignment branch exists', branch, branch ? null : 'accept branch missing');
-  record('R009', 'first assignment enforces offer window', window, window ? null : 'expiry check missing');
-  record('R010', 'first assignment 5-key allowlist', keys, keys ? null : 'allowlist missing');
+  record('R009', 'release branch enforces offer window', window, window ? null : 'expiry check missing');
+  const vehiclesBlock = matchBlock('vehicles/{id}');
+  const keys = vehiclesBlock != null
+    && /affectedKeys\(\)[\s\S]*?\.hasOnly\(\['make',\s*'model',\s*'year',\s*'plate',\s*'type',\s*'isDefault'\]\)/.test(vehiclesBlock);
+  record('R010', 'vehicles update allowlists editable fields', keys, keys ? null : 'vehicles update allowlist missing');
   const ownership = /hasValidOffer\(id\)/.test(body) && /function hasValidOffer/.test(src)
     && /\.data\.status\s*==\s*'pending'/.test(src)
     && /\.data\.expiresAt\s*>\s*request\.time/.test(src);
-  record('R037', 'first assignment requires an owned pending offer', ownership, ownership ? null : 'offer ownership guard missing');
+  record('R037', 'decline branch requires an owned pending offer', ownership, ownership ? null : 'offer ownership guard missing');
   const transitions = /resource\.data\.status\s*==\s*'accepted'\s*&&\s*request\.resource\.data\.status\s*==\s*'on-the-way'/.test(body)
     && /resource\.data\.status\s*==\s*'on-the-way'\s*&&\s*request\.resource\.data\.status\s*==\s*'arrived'/.test(body)
     && /resource\.data\.status\s*==\s*'arrived'\s*&&\s*request\.resource\.data\.status\s*==\s*'service'/.test(body)
