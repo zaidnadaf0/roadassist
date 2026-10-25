@@ -1,12 +1,13 @@
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import type { MechanicProfile, ServiceRequest } from './types';
 import { buildPublicProjection } from './projection';
 import { acceptOfferTx, createOfferBatch, declineOfferTx, rematchRequest, supersedePendingOffers, sweepRequest } from './dispatch';
 import { noticeForOffer, noticesForTransition, putNotification } from './notifications';
 
-admin.initializeApp();
-const db = admin.firestore();
+initializeApp();
+const db = getFirestore();
 
 export { grantAdminRole, revokeAdminRole } from './admin';
 export { setMechanicApproval } from './approval';
@@ -33,7 +34,7 @@ export const onMechanicWrite = functions.firestore
       return;
     }
     await pubRef.set(
-      { ...projection, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { ...projection, updatedAt: FieldValue.serverTimestamp() },
       { merge: true },
     );
     console.log(`[onMechanicWrite] ${mechanicId}: projection synced`);
@@ -178,7 +179,7 @@ async function maybeClearMechanicLiveLocation(
         currentLat: null,
         currentLng: null,
         locationUpdatedAt: null,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
     );

@@ -1,5 +1,5 @@
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { requireCallerAdmin, requireTargetUid } from './admin';
 import { noticeForApproval, putNotification } from './notifications';
 import type { VerificationStatus } from './types';
@@ -49,7 +49,7 @@ export const setMechanicApproval = functions.https.onCall(async (data, context) 
   if (!isApprovableStatus(status)) {
     throw new functions.https.HttpsError('invalid-argument', 'status must be pending|under_review|approved|suspended|rejected');
   }
-  const db = admin.firestore();
+  const db = getFirestore();
   const mechRef = db.collection('mechanics').doc(uid);
   const snap = await mechRef.get();
   if (!snap.exists) {
@@ -67,7 +67,7 @@ export const setMechanicApproval = functions.https.onCall(async (data, context) 
     {
       approved,
       verificationStatus: status,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true },
   );
@@ -88,7 +88,7 @@ export const setMechanicApproval = functions.https.onCall(async (data, context) 
       .collection('users')
       .doc(uid)
       .set(
-        { role: approved ? 'mechanic' : 'customer', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { role: approved ? 'mechanic' : 'customer', updatedAt: FieldValue.serverTimestamp() },
         { merge: true },
       );
   } catch (err) {

@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { writeAuditEvent } from './audit';
 
 /**
@@ -29,19 +30,18 @@ export function requireCallerAdmin(context: functions.https.CallableContext): vo
 export const grantAdminRole = functions.https.onCall(async (data, context) => {
   requireCallerAdmin(context);
   const uid = requireTargetUid(data);
-  await admin.auth().setCustomUserClaims(uid, { admin: true });
+  await getAuth().setCustomUserClaims(uid, { admin: true });
   try {
-    await admin
-      .firestore()
+    await getFirestore()
       .collection('users')
       .doc(uid)
-      .set({ role: 'admin', updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      .set({ role: 'admin', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   } catch (err) {
     console.error(`[grantAdminRole] ${uid}: claim set, role-hint sync failed`, err);
     return { success: true, uid, roleHintSynced: false };
   }
   try {
-    await writeAuditEvent(admin.firestore(), {
+    await writeAuditEvent(getFirestore(), {
       actorUid: context.auth?.uid ?? 'unknown',
       action: 'admin_claim_granted',
       targetType: 'user',
@@ -57,13 +57,13 @@ export const grantAdminRole = functions.https.onCall(async (data, context) => {
 export const revokeAdminRole = functions.https.onCall(async (data, context) => {
   requireCallerAdmin(context);
   const uid = requireTargetUid(data);
-  await admin.auth().setCustomUserClaims(uid, {});
+  await getAuth().setCustomUserClaims(uid, {});
   try {
-    const ref = admin.firestore().collection('users').doc(uid);
+    const ref = getFirestore().collection('users').doc(uid);
     const snap = await ref.get();
     if (snap.exists && (snap.data() as { role?: unknown } | undefined)?.role === 'admin') {
       await ref.set(
-        { role: 'customer', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { role: 'customer', updatedAt: FieldValue.serverTimestamp() },
         { merge: true },
       );
     }
@@ -72,7 +72,7 @@ export const revokeAdminRole = functions.https.onCall(async (data, context) => {
     return { success: true, uid, roleHintSynced: false };
   }
   try {
-    await writeAuditEvent(admin.firestore(), {
+    await writeAuditEvent(getFirestore(), {
       actorUid: context.auth?.uid ?? 'unknown',
       action: 'admin_claim_revoked',
       targetType: 'user',

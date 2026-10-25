@@ -1,4 +1,4 @@
-import * as admin from 'firebase-admin';
+import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import type { ServiceRequest } from './types';
 
 /**
@@ -232,10 +232,10 @@ export async function putNotification(
   toUid: string,
   event: string,
   notice: Notice,
-  db?: admin.firestore.Firestore,
+  db?: Firestore,
 ): Promise<boolean> {
   try {
-    const store = db ?? admin.firestore();
+    const store = db ?? getFirestore();
     const id = noticeId(notice.requestId ?? toUid, event);
     const ref = store.collection('notifications').doc(toUid).collection('items').doc(id);
     if ((await ref.get()).exists) return true;
