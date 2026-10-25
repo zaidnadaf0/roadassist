@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RoadAssist — 24/7 Smart Roadside Assistance</title>
+<meta name="description" content="RoadAssist connects stranded drivers with verified roadside mechanics in minutes. Towing, battery jump, flat tire, fuel delivery, lockout and winch-out — with live GPS tracking and transparent pricing.">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+
+<!-- Social preview -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="RoadAssist — 24/7 Smart Roadside Assistance">
+<meta property="og:description" content="One tap connects you with certified roadside mechanics. Live GPS tracking, verified professionals, transparent pricing.">
+<meta property="og:site_name" content="RoadAssist">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23D8B4FE'/%3E%3Cstop offset='.5' stop-color='%23A855F7'/%3E%3Cstop offset='1' stop-color='%237C3AED'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M9 20.5h14M11.5 20.5v2M20.5 20.5v2M10 20.5l1.6-5.2A2 2 0 0 1 13.5 14h5a2 2 0 0 1 1.9 1.3l1.6 5.2' stroke='%23FFFFFF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+
+<!-- Fonts (degrades to the system stack offline) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap">
+
+<!-- Leaflet — OpenStreetMap, same free tile approach as flutter_map in the app -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+
+<!-- App styles -->
+<link rel="stylesheet" href="assets/css/tokens.css">
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/components.css">
+<link rel="stylesheet" href="assets/css/views.css">
+</head>
+<body>
+
+<!-- Ambient particle-wave background (user video ref: dotted wave mesh).
+     Fixed canvas, painted by assets/js/bg-wave.js. -->
+<canvas id="bgwave" aria-hidden="true"></canvas>
+<div class="bg-veil" aria-hidden="true"></div>
+
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<!-- The router renders every route into here -->
+<div id="app" aria-live="polite"></div>
+
+<!-- Overlay hosts -->
+<div id="modal-root"></div>
+<div class="toasts" id="toast-root" role="status" aria-live="polite" aria-atomic="false"></div>
+
+<!--
+  Loaded as classic scripts (not ES modules) on purpose: ES modules are blocked
+  by CORS on the file:// protocol, so module imports would break the site when
+  you simply double-click index.html. Everything hangs off the global `RA`.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+<!--
+  Firebase (compat/namespaced build) — the real backend.
+
+  Only does anything when assets/js/config.js sets BACKEND = 'firebase'; in
+  demo mode these two files are just an unused download, and if they fail to
+  load the site still runs on demo data.
+
+  The *compat* build is required rather than the modern modular one: the
+  modular SDK is ES-module-only and would need a bundler, which would break
+  the double-click-index.html promise.
+-->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" crossorigin="anonymous"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js" crossorigin="anonymous"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js" crossorigin="anonymous"></script>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/icons.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/seed.js"></script>
+<script src="assets/js/store.js"></script>
+<script src="assets/js/adapter-firebase.js"></script>
+<script src="assets/js/backend.js"></script>
+<script src="assets/js/ui.js"></script>
+<script src="assets/js/map.js"></script>
+<script src="assets/js/chrome.js"></script>
+<script src="assets/js/views-public.js"></script>
+<script src="assets/js/views-auth.js"></script>
+<script src="assets/js/views-customer.js"></script>
+<script src="assets/js/views-mechanic.js"></script>
+<script src="assets/js/views-admin.js"></script>
+<script src="assets/js/router.js"></script>
+<script src="assets/js/bg-wave.js"></script>
+<script src="assets/js/app.js"></script>
+
+</body>
+</html>

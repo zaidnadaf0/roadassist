@@ -1,0 +1,42 @@
+{
+  "name": "roadassist",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "RoadAssist — roadside assistance web app (M1: React + TypeScript + Vite foundation, BACKUP UX preserved).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:emulator": "vitest run --config vitest.emulator.config.ts",
+    "lint:rules": "node scripts/check-rules.mjs",
+    "build:functions": "npm --prefix functions run build"
+  },
+  "dependencies": {
+    "firebase": "^12.19.0",
+    "leaflet": "^1.9.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1",
+    "react-router-dom": "^7.0.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "@opentelemetry/api": "^1.9.1",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^22.5.5",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "firebase-admin": "^14.5.0",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.21",
+    "vitest": "^4.1.11"
+  }
+}

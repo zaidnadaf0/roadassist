@@ -1,0 +1,447 @@
+rules_version = '2';
+// RoadAssist Firestore security rules (M3).
+//
+// Trust model (ported from the proven MECHIST 1B/1C architecture):
+//   - The client is untrusted. `users/{uid}.role` is a UI *hint*.
+//   - Authoritative admin = custom claim `request.auth.token.admin == true`.
+//   - Mechanic authority = approved operational record (`approved == true`),
+//     never a client-selected role.
+//   - `mechanics/{uid}` is PRIVATE operational data. Customers read only
+//     the server-generated `publicMechanics/{uid}` projection.
+//   - Anything the client must not forge (claims, approvals, ratings,
+//     notifications, projections) is written by trusted backend (Admin SDK
+//     bypasses these rules) or claim-admins.
+//
+// Roles: customer | mechanic | admin (hint). Lifecycle: requested →
+// accepted → on-the-way → arrived → service → completed, plus cancelled.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- helpers ----
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    /** Role resolution. Every helper stays boolean: `(x is string && x)`
+     *  returns a STRING into `&&` — a type error for any caller that HAS a
+     *  role. Equality keeps all operands boolean. Claim reads are
+     *  `in`-guarded (absent claims are evaluation errors, not null). */
+    function claimRoleIs(r) {
+      return ('role' in request.auth.token) && request.auth.token.role == r;
+    }
+    function docRoleIs(r) {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == r;
+    }
+    function isCustomer() {
+      return isSignedIn() && (claimRoleIs('customer') || docRoleIs('customer'));
+    }
+    function isMechanic() {
+      return isSignedIn() && (claimRoleIs('mechanic') || docRoleIs('mechanic'));
+    }
+    function isClaimAdmin() {
+      // `in`-guard: reading an absent custom claim is an evaluation error,
+      // not null — without it every claim-less caller fails closed AND every
+      // role check errors out.
+      return isSignedIn() && ('admin' in request.auth.token) && request.auth.token.admin == true;
+    }
+    function isMechanicApproved() {
+      return isMechanic()
+        && get(/databases/$(database)/documents/mechanics/$(request.auth.uid)).data.approved == true;
+    }
+    function hasValidOffer(requestId) {
+      return exists(/databases/$(database)/documents/requests/$(requestId)/offers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/requests/$(requestId)/offers/$(request.auth.uid)).data.mechanicId == request.auth.uid
+        && get(/databases/$(database)/documents/requests/$(requestId)/offers/$(request.auth.uid)).data.status == 'pending'
+        && get(/databases/$(database)/documents/requests/$(requestId)/offers/$(request.auth.uid)).data.expiresAt > request.time;
+    }
+
+    // ---- users/{uid} ----
+
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isClaimAdmin();
+      // Self-signup: customer or mechanic hint only — admin can never be
+      // self-issued. Key allowlist matches the M2 signup payload exactly
+      // ({uid, role, displayName, email, phone, createdAt, updatedAt}).
+      allow create: if isSelf(uid)
+        && request.resource.data.role in ['customer', 'mechanic']
+        && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'email', 'phone', 'createdAt', 'updatedAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.displayName is string
+        && request.resource.data.email is string
+        && (request.resource.data.phone == null || request.resource.data.phone is string)
+        && !('password' in request.resource.data)
+        && !('passwordHash' in request.resource.data);
+      // Profile edit only: role frozen (no self-promotion), approved
+      // untouched, profile fields only.
+      allow update: if (isSelf(uid) || isClaimAdmin())
+        && request.resource.data.role == resource.data.role
+        && !('approved' in request.resource.data.diff(resource.data).affectedKeys())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'updatedAt'])
+        && (!('displayName' in request.resource.data) || request.resource.data.displayName is string)
+        && (!('phone' in request.resource.data) || request.resource.data.phone == null || request.resource.data.phone is string);
+      allow delete: if isClaimAdmin();
+    }
+
+    // ---- vehicles/{id} ----
+
+    match /vehicles/{id} {
+      allow read: if isSignedIn()
+        && (resource.data.ownerId == request.auth.uid || isClaimAdmin());
+      allow create: if isSignedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && isCustomer()
+        && request.resource.data.keys().hasOnly(['ownerId', 'make', 'model', 'year', 'plate', 'type', 'isDefault', 'createdAt'])
+        && request.resource.data.make is string
+        && request.resource.data.model is string
+        && request.resource.data.plate is string
+        && request.resource.data.year is number
+        && request.resource.data.type in ['car', 'bike', 'van', 'truck']
+        && (!('isDefault' in request.resource.data) || request.resource.data.isDefault is bool);
+      // ownerId frozen: ownership can never be transferred by rewrite.
+      allow update: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid;
+    }
+
+    // ---- requests/{id} ----
+
+    match /requests/{id} {
+      allow read: if isSignedIn() && (
+        isClaimAdmin() ||
+        resource.data.customerId == request.auth.uid ||
+        (resource.data.status == 'requested' && isMechanicApproved()) ||
+        (resource.data.mechanicId == request.auth.uid)
+      );
+      // Customer creates its own request: exact allowlist, owned vehicle,
+      // unassigned, finite coords, bounded problem text.
+      // Offer window is a Firestore TIMESTAMP (not epoch millis): rules compare
+      // it against `request.time`, and timestamp<int is an evaluation error
+      // that would deny every accept and release. Clients write
+      // Timestamp.fromMillis(Date.now() + OFFER_WINDOW_MS).
+      allow create: if isSignedIn() && isCustomer()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.status == 'requested'
+        && request.resource.data.offerExpiresAt is timestamp
+        && request.resource.data.problemText is string
+        && request.resource.data.problemText.size() >= 5
+        && request.resource.data.problemText.size() <= 2000
+        && request.resource.data.customerLat is number
+        && request.resource.data.customerLng is number
+        && request.resource.data.customerLat >= -90
+        && request.resource.data.customerLat <= 90
+        && request.resource.data.customerLng >= -180
+        && request.resource.data.customerLng <= 180
+        && request.resource.data.keys().hasOnly(['id', 'customerId', 'vehicleId', 'problemText', 'problemCategory',
+            'customerLat', 'customerLng', 'pickedMechanicId', 'status', 'offerExpiresAt',
+            'mechanicId', 'createdAt', 'updatedAt'])
+        && request.resource.data.vehicleId is string
+        && request.resource.data.mechanicId == null
+        && (!('problemCategory' in request.resource.data) || request.resource.data.problemCategory is string)
+        && (!('pickedMechanicId' in request.resource.data) || request.resource.data.pickedMechanicId is string)
+        && exists(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId))
+        && get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.ownerId == request.auth.uid;
+      // Keep each update path as a separate allow clause. Firestore ORs these
+      // clauses, while evaluating each branch independently. A single large
+      // disjunction here exceeds the rules expression budget for ordinary
+      // request updates because several branches read role/offer documents.
+
+      // Customer: cancel a LIVE request, or rate an already-completed one.
+      allow update: if resource.data.customerId == request.auth.uid
+        && isCustomer()
+        && request.resource.data.status in ['cancelled', 'completed']
+        && ((request.resource.data.status == 'cancelled'
+             && resource.data.status in ['requested', 'accepted', 'on-the-way', 'arrived'])
+            || (request.resource.data.status == resource.data.status
+                && resource.data.status == 'completed'))
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'rating', 'comment', 'ratedAt', 'updatedAt',
+                      'cancelledAt', 'cancelledBy', 'cancellationReason'])
+        && (!('rating' in request.resource.data)
+            || (request.resource.data.rating is number
+                && request.resource.data.rating >= 1
+                && request.resource.data.rating <= 5))
+        && (!('comment' in request.resource.data)
+            || (request.resource.data.comment is string
+                && request.resource.data.comment.size() <= 500))
+        && (!('cancelledBy' in request.resource.data)
+            || request.resource.data.cancelledBy == 'customer')
+        && (!('cancellationReason' in request.resource.data)
+            || (request.resource.data.cancellationReason is string
+                && request.resource.data.cancellationReason.size() <= 500));
+
+      // Assigned mechanic advances one lifecycle step at a time or pushes
+      // live coords. Identity is frozen and terminal states are frozen.
+      allow update: if resource.data.mechanicId == request.auth.uid
+        && isMechanic()
+        && !(resource.data.status in ['completed', 'cancelled'])
+        && request.resource.data.mechanicId == resource.data.mechanicId
+        && request.resource.data.mechanicName == resource.data.mechanicName
+        && ((resource.data.status == 'accepted' && request.resource.data.status == 'on-the-way')
+            || (resource.data.status == 'on-the-way' && request.resource.data.status == 'arrived')
+            || (resource.data.status == 'arrived' && request.resource.data.status == 'service')
+            || (resource.data.status == 'service' && request.resource.data.status == 'completed')
+            || (request.resource.data.status == resource.data.status
+                && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                  'mechanicLat', 'mechanicLng', 'mechanicLocationUpdatedAt', 'etaMin', 'updatedAt'])) )
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'mechanicLat', 'mechanicLng', 'mechanicLocationUpdatedAt', 'etaMin',
+                      'updatedAt', 'amountCents', 'durationMin'])
+        && (!('etaMin' in request.resource.data)
+            || (request.resource.data.etaMin is number
+                && request.resource.data.etaMin >= 1
+                && request.resource.data.etaMin <= 180))
+        && (!('mechanicLat' in request.resource.data)
+            || request.resource.data.mechanicLat == null
+            || (request.resource.data.mechanicLat is number
+                && request.resource.data.mechanicLat >= -90
+                && request.resource.data.mechanicLat <= 90))
+        && (!('mechanicLng' in request.resource.data)
+            || request.resource.data.mechanicLng == null
+            || (request.resource.data.mechanicLng is number
+                && request.resource.data.mechanicLng >= -180
+                && request.resource.data.mechanicLng <= 180))
+        && (!('mechanicLocationUpdatedAt' in request.resource.data)
+            || request.resource.data.mechanicLocationUpdatedAt == null
+            || (request.resource.data.mechanicLocationUpdatedAt is number
+                && request.resource.data.mechanicLocationUpdatedAt >= 0
+                && request.resource.data.mechanicLocationUpdatedAt <= 4102444800000))
+        && ((!(request.resource.data.diff(resource.data).affectedKeys().hasAny(['amountCents', 'durationMin'])))
+            || request.resource.data.status == 'completed')
+        && (!('amountCents' in request.resource.data)
+            || (request.resource.data.amountCents is number
+                && request.resource.data.amountCents >= 0
+                && request.resource.data.amountCents <= 1000000))
+        && (!('durationMin' in request.resource.data)
+            || (request.resource.data.durationMin is number
+                && request.resource.data.durationMin >= 0
+                && request.resource.data.durationMin <= 1440));
+
+      // Approved mechanic declines: append-only UID, cap 50.
+      allow update: if resource.data.status == 'requested'
+        && (resource.data.mechanicId == null || resource.data.mechanicId == '')
+        && isMechanicApproved()
+        && hasValidOffer(id)
+        && request.resource.data.status == 'requested'
+        && request.resource.data.declinedBy is list
+        && request.resource.data.declinedBy.size() <= 50
+        && request.auth.uid in request.resource.data.declinedBy
+        && ((resource.data.keys().hasAll(['declinedBy']) && resource.data.declinedBy is list)
+            ? request.resource.data.declinedBy.size() == resource.data.declinedBy.size() + 1
+            : request.resource.data.declinedBy.size() == 1)
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['declinedBy', 'updatedAt']);
+
+      // Assigned mechanic releases back to the queue.
+      allow update: if resource.data.mechanicId == request.auth.uid
+        && isMechanic()
+        && resource.data.status in ['accepted', 'on-the-way', 'arrived', 'service']
+        && request.resource.data.status == 'requested'
+        && request.resource.data.mechanicId == null
+        && (!('mechanicName' in request.resource.data) || request.resource.data.mechanicName == null)
+        && (!('mechanicPhone' in request.resource.data) || request.resource.data.mechanicPhone == null)
+        && (!('mechanicLat' in request.resource.data) || request.resource.data.mechanicLat == null)
+        && (!('mechanicLng' in request.resource.data) || request.resource.data.mechanicLng == null)
+        && (!('mechanicLocationUpdatedAt' in request.resource.data) || request.resource.data.mechanicLocationUpdatedAt == null)
+        && request.resource.data.offerExpiresAt is timestamp
+        && request.time < request.resource.data.offerExpiresAt
+        && request.resource.data.releaseReason is string
+        && request.resource.data.releaseReason.size() <= 500
+        && request.resource.data.releasedAt is timestamp
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'mechanicId', 'mechanicName', 'mechanicPhone', 'mechanicLat',
+                      'mechanicLng', 'mechanicLocationUpdatedAt', 'offerExpiresAt', 'releaseReason', 'releasedAt', 'updatedAt']);
+
+      // First assignment: approved mechanic claims an open offer in-window.
+      allow update: if resource.data.status == 'requested'
+        && request.resource.data.status == 'accepted'
+        && (resource.data.mechanicId == null || resource.data.mechanicId == '')
+        && request.resource.data.mechanicId == request.auth.uid
+        && request.resource.data.mechanicName is string
+        && request.resource.data.mechanicName.size() >= 1
+        && request.resource.data.mechanicName.size() <= 120
+        && request.resource.data.offerExpiresAt is timestamp
+        && request.time < request.resource.data.offerExpiresAt
+        && isMechanicApproved()
+        && hasValidOffer(id)
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'mechanicId', 'mechanicName', 'etaMin', 'updatedAt'])
+        && (!('etaMin' in request.resource.data)
+            || (request.resource.data.etaMin is number
+                && request.resource.data.etaMin >= 1
+                && request.resource.data.etaMin <= 180));
+
+      // Admin operations remain explicit and independent of user branches.
+      allow update: if isClaimAdmin();
+      allow delete: if isClaimAdmin();
+    }
+
+    // ---- mechanics/{uid} — PRIVATE operational source ----
+
+    match /mechanics/{uid} {
+      // Owner + claim-admin only. Customers use publicMechanics/{uid}.
+      allow read: if isSignedIn() && (isSelf(uid) || isClaimAdmin());
+      // Self-onboarding: starts unapproved; contact stays in private/contact.
+      allow create: if isSelf(uid)
+        && isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.approved == false
+        && request.resource.data.verificationStatus in ['pending', 'under_review']
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'approved', 'verificationStatus',
+            'specialties', 'vehicleTypes', 'experienceYears', 'serviceRadiusKm', 'isAvailable',
+            'vehicleDescription', 'garageName', 'garageAddress', 'baseLat', 'baseLng',
+            'createdAt', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.specialties is list
+        && request.resource.data.vehicleTypes is list
+        && request.resource.data.experienceYears is number
+        && request.resource.data.experienceYears >= 0
+        && request.resource.data.experienceYears <= 60
+        && request.resource.data.serviceRadiusKm is number
+        && request.resource.data.serviceRadiusKm >= 1
+        && request.resource.data.serviceRadiusKm <= 200
+        && request.resource.data.isAvailable is bool
+        && request.resource.data.garageName is string
+        && request.resource.data.garageAddress is string
+        && (!('vehicleDescription' in request.resource.data)
+            || request.resource.data.vehicleDescription == null
+            || request.resource.data.vehicleDescription is string)
+        && (!('baseLat' in request.resource.data)
+            || request.resource.data.baseLat == null
+            || (request.resource.data.baseLat is number
+                && request.resource.data.baseLat >= -90
+                && request.resource.data.baseLat <= 90))
+        && (!('baseLng' in request.resource.data)
+            || request.resource.data.baseLng == null
+            || (request.resource.data.baseLng is number
+                && request.resource.data.baseLng >= -180
+                && request.resource.data.baseLng <= 180))
+        && !('phone' in request.resource.data)
+        && !('email' in request.resource.data)
+        && !('password' in request.resource.data)
+        && !('passwordHash' in request.resource.data);
+      // Self-update: availability + live/base-location marker only.
+      // Approval, verification, rating and contact are never self-writable.
+      allow update: if isSignedIn() && (
+        (isSelf(uid) && isMechanic()
+          && request.resource.data.approved == resource.data.approved
+          && request.resource.data.verificationStatus == resource.data.verificationStatus
+          && !('rating' in request.resource.data.diff(resource.data).affectedKeys())
+          && !('reviewCount' in request.resource.data.diff(resource.data).affectedKeys())
+          && !('phone' in request.resource.data.diff(resource.data).affectedKeys())
+          && !('email' in request.resource.data.diff(resource.data).affectedKeys())
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['isAvailable', 'currentLat', 'currentLng', 'locationUpdatedAt', 'updatedAt'])
+          && (!('isAvailable' in request.resource.data) || request.resource.data.isAvailable is bool)
+          && (!('currentLat' in request.resource.data)
+              || (request.resource.data.currentLat is number
+                  && request.resource.data.currentLat >= -90
+                  && request.resource.data.currentLat <= 90))
+          && (!('currentLng' in request.resource.data)
+              || (request.resource.data.currentLng is number
+                  && request.resource.data.currentLng >= -180
+                  && request.resource.data.currentLng <= 180))
+          && (!('locationUpdatedAt' in request.resource.data) || request.resource.data.locationUpdatedAt is number)) ||
+        isClaimAdmin()
+      );
+      allow delete: if isClaimAdmin();
+
+      match /private/contact {
+        allow read: if isSignedIn() && (isSelf(uid) || isClaimAdmin());
+        allow create, update: if isSignedIn() && (isSelf(uid) || isClaimAdmin())
+          && request.resource.data.keys().hasOnly(['phone', 'email', 'updatedAt'])
+          && (request.resource.data.phone == null || request.resource.data.phone is string)
+          && (request.resource.data.email == null || request.resource.data.email is string);
+        allow delete: if isClaimAdmin();
+      }
+    }
+
+    // ---- publicMechanics/{uid} — server-written customer-safe projection ----
+
+    match /publicMechanics/{uid} {
+      allow read: if true;
+      allow create, update: if isClaimAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'approved', 'isAvailable',
+            'specialties', 'vehicleTypes', 'experienceYears', 'serviceRadiusKm',
+            'rating', 'reviewCount', 'vehicleDescription', 'garageName',
+            'baseLat', 'baseLng', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.approved == true
+        && request.resource.data.isAvailable is bool
+        && (!('baseLat' in request.resource.data)
+            || request.resource.data.baseLat == null
+            || (request.resource.data.baseLat is number
+                && request.resource.data.baseLat >= -90
+                && request.resource.data.baseLat <= 90))
+        && (!('baseLng' in request.resource.data)
+            || request.resource.data.baseLng == null
+            || (request.resource.data.baseLng is number
+                && request.resource.data.baseLng >= -180
+                && request.resource.data.baseLng <= 180))
+        && !('phone' in request.resource.data)
+        && !('email' in request.resource.data)
+        && !('garageAddress' in request.resource.data)
+        && !('currentLat' in request.resource.data)
+        && !('currentLng' in request.resource.data);
+      allow delete: if isClaimAdmin();
+    }
+
+    // ---- offers (collection-group readable) — server-written pool ----
+    //
+    // Offer docs are written ONLY by trusted backend (Admin SDK bypasses
+    // rules; callables re-validate everything server-side). Clients can
+    // never create, modify, or delete offers — accept/decline travel through
+    // the callables, and the M3 request-level branches remain as the
+    // always-on guard.
+    //
+    // The recursive wildcard is REQUIRED: collection-group queries (the
+    // mechanic queue, admin dispatch) never match a concrete
+    // `requests/{id}/offers/{id}` pattern, so a concrete-only block would
+    // deny every pool read at runtime. Reads: the addressed mechanic, the
+    // owning customer (denormalized `customerId` — no parent get() needed),
+    // or a claim-admin.
+    match /{path=**}/offers/{offerId} {
+      // `in`-guards: like custom claims, absent document fields are
+      // evaluation errors, not null — ungarded access would deny reads of
+      // older docs that predate a field.
+      allow read: if isSignedIn() && (
+        isClaimAdmin() ||
+        (('mechanicId' in resource.data) && resource.data.mechanicId == request.auth.uid) ||
+        (('customerId' in resource.data) && resource.data.customerId == request.auth.uid)
+      );
+      allow create, update, delete: if false;
+    }
+
+    // ---- notifications/{uid}/items/{id} — server-only producers ----
+
+    match /notifications/{uid}/items/{id} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if false;
+      allow update: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+        && ('read' in request.resource.data)
+        && request.resource.data.read is bool;
+      allow delete: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ---- auditEvents/{id} — immutable trusted operator history ----
+    // Cloud Functions write these with Admin SDK. Claim-admins can read;
+    // clients can never create, edit, or delete audit records.
+    match /auditEvents/{id} {
+      allow read: if isClaimAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // ---- catch-all ----
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

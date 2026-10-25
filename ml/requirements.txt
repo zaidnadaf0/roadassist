@@ -1,0 +1,5 @@
+# RoadAssist M9 ML pipeline — SYNTHETIC DEVELOPMENT DATA ONLY (see problem.md).
+numpy==2.4.2
+pandas==3.0.5
+scikit-learn==1.8.0
+pytest>=8.0

@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+functions/lib/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Python caches (ml/)
+__pycache__/
+.pytest_cache/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.stackdump
+.vscode/
+.idea/
+
+# Local env (later phases)
+.env
+.env.local
+
+# Legacy reference snapshot lives in ./legacy (checked-in reference material).
+# M0 archive copy lives outside the repo in the local Temp dir.

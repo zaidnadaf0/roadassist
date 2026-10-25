@@ -1,0 +1,10 @@
+{
+  "generator": "m9-gen-v1",
+  "seed": 42,
+  "n_requests_attempted": 3000,
+  "n_requests": 3000,
+  "n_candidate_rows": 35586,
+  "synthetic": true,
+  "sha256_requests": "06616cdc3a5d11bbbf8bc8c59aea72ecbf303af2ad6ee2412e68fb8fd6760e95",
+  "sha256_candidates": "ea492fa166fb06152a7fdd6604c54554dbfa6c6de00652bc76fdf3d13efe682c"
+}

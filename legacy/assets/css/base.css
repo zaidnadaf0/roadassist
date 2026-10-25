@@ -1,0 +1,350 @@
+/* ==========================================================================
+   RoadAssist Web — Base: reset, shell, responsive navigation
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-wrap: break-word;
+  /* Pure-black stage with a neon-purple wash anchored at the bottom. */
+  background-image:
+    radial-gradient(120% 80% at 50% 110%, rgba(168,85,247,.14) 0%, rgba(168,85,247,0) 55%),
+    radial-gradient(80% 50% at 50% -10%, rgba(124,58,237,.10) 0%, rgba(124,58,237,0) 60%),
+    var(--carbon);
+  background-attachment: fixed, fixed, fixed;
+}
+
+/* Display headings: tight tracking + neon-purple gradient ink. */
+.display {
+  font-size: var(--fs-display);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  background: linear-gradient(180deg, #FFFFFF 0%, #D8B4FE 55%, #A855F7 100%);
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  filter: drop-shadow(0 0 22px rgba(168,85,247,.35));
+}
+.display-2 {
+  font-size: var(--fs-h1);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+h1, h2, h3, h4, p, figure, blockquote { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+img, svg { display: block; max-width: 100%; }
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+input { -webkit-tap-highlight-color: transparent; }
+
+html { scroll-behavior: smooth; }
+
+/* Visible focus for keyboard users only — the Flutter app had no focus states
+   at all, which is a real accessibility gap on the web. */
+:focus-visible {
+  outline: 2px solid var(--primary-hi, #C084FC);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+  box-shadow: 0 0 0 4px rgba(168,85,247,.25), 0 0 16px rgba(168,85,247,.4);
+}
+
+::selection { background: rgba(168,85,247,.45); color: #fff; }
+
+/* Scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--r-full); border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.skip-link {
+  position: absolute; top: -100px; left: var(--s-4); z-index: 200;
+  background: var(--primary); color: var(--primary-ink); font-weight: 700;
+  padding: 10px 16px; border-radius: var(--r-md);
+}
+.skip-link:focus { top: var(--s-3); text-decoration: none; }
+
+[hidden] { display: none !important; }
+
+/* ==========================================================================
+   APP SHELL
+   Mobile  : topbar + scrolling content + bottom tab bar   (mirrors the app)
+   Desktop : persistent left rail + wide content            (the "website" part)
+   ========================================================================== */
+
+#app { min-height: 100dvh; display: flex; flex-direction: column; position: relative; z-index: 1; }
+
+/* --- Ambient particle-wave backdrop (user video reference) ---
+   Fixed dotted-wave canvas behind everything + a veil that keeps text
+   readable: theme surface fades in below the hero fold. */
+#bgwave {
+  position: fixed; inset: 0; z-index: 0;
+  width: 100vw; height: 100vh;
+  pointer-events: none;
+  opacity: .8;
+  mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 86%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 86%);
+}
+.bg-veil {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    linear-gradient(180deg, transparent 0%, transparent 34%, var(--bg) 78%),
+    radial-gradient(120% 60% at 50% 0%, transparent 40%, var(--bg) 100%);
+  opacity: .55;
+}
+:root[data-theme="dark"] #bgwave { opacity: .9; }
+:root[data-theme="dark"] .bg-veil { opacity: .72; }
+
+/* --- Page transitions -----------------------------------------------------
+    The router swaps #app's innerHTML on every navigation, so an entrance
+    animation on the route root replays automatically on every page change:
+    fade + rise + micro-scale. Blur is applied to a pseudo overlay instead of
+    the element itself to keep compositing cheap. */
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(12px) scale(.996); }
+  to   { opacity: 1; transform: none; }
+}
+.public > *, .shell__content > *, .auth > *, .onb > *, .splash > * {
+  animation: pageIn var(--t-page) var(--ease-out) both;
+}
+.shell__content > :nth-child(2) { animation-delay: 40ms; }
+.shell__content > :nth-child(3) { animation-delay: 80ms; }
+.shell__content > :nth-child(n+4) { animation-delay: 110ms; }
+
+/* --- Shell used by all signed-in routes --- */
+.shell {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 100dvh;
+}
+
+.shell__main {
+  min-width: 0;              /* lets grid/flex children shrink instead of overflow */
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom, 0px));
+}
+
+.shell__content {
+  flex: 1;
+  width: 100%;
+  max-width: var(--content-max);
+  margin-inline: auto;
+  padding: var(--s-5) clamp(var(--s-4), 3vw, var(--s-8)) var(--s-10);
+}
+
+/* --- Top bar --- */
+.topbar {
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: var(--s-3);
+  min-height: var(--topbar-h);
+  padding: var(--s-2) clamp(var(--s-4), 3vw, var(--s-6));
+  background: var(--nav-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--w08);
+}
+
+.topbar__back {
+  display: grid; place-items: center;
+  width: 38px; height: 38px; flex: none;
+  border-radius: var(--r-full);
+  background: var(--w08);
+  transition: background var(--t-fast) var(--ease);
+}
+.topbar__back:hover { background: var(--w12); }
+
+.topbar__id { display: flex; align-items: center; gap: var(--s-3); min-width: 0; }
+
+.topbar__titles { min-width: 0; }
+.topbar__title {
+  font-size: var(--fs-h3); font-weight: 700; letter-spacing: -.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.topbar__sub {
+  font-size: var(--fs-2xs); color: var(--w54);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.topbar__spacer { flex: 1; }
+.topbar__actions { display: flex; align-items: center; gap: var(--s-2); flex: none; }
+
+.iconbtn {
+  position: relative;
+  display: grid; place-items: center;
+  width: 40px; height: 40px;
+  border-radius: var(--r-full);
+  color: var(--w70);
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.iconbtn:hover { background: var(--b06); color: var(--text); }
+
+.iconbtn__dot {
+  position: absolute; top: 8px; right: 9px;
+  width: 8px; height: 8px; border-radius: var(--r-full);
+  background: var(--danger);
+  border: 2px solid var(--surface);
+  animation: dotPulse 2.2s var(--ease) infinite;
+}
+
+/* Hamburger — only on small screens */
+.topbar__menu { display: grid; }
+
+/* ==========================================================================
+   LEFT RAIL (desktop navigation)
+   ========================================================================== */
+
+.rail {
+  position: fixed; inset: 0 auto 0 0; z-index: 60;
+  width: min(86vw, var(--rail-w));
+  display: flex; flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  transform: translateX(-100%);
+  transition: transform var(--t-base) var(--ease);
+}
+.rail.is-open { transform: none; }
+
+.rail__head {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-5) var(--s-5) var(--s-4);
+  border-bottom: 1px solid var(--w06);
+}
+
+.rail__logo {
+  display: grid; place-items: center;
+  width: 38px; height: 38px; flex: none;
+  border-radius: var(--r-md);
+  background: var(--grad-primary);
+  box-shadow: var(--sh-glow);
+  color: var(--primary-ink);
+}
+.rail__word { font-weight: 800; font-size: 1.0625rem; letter-spacing: -.02em; }
+.rail__tag { font-size: var(--fs-2xs); color: var(--text-2); }
+
+.rail__close { margin-left: auto; }
+
+.rail__scroll { flex: 1; overflow-y: auto; padding: var(--s-4) var(--s-3) var(--s-6); }
+
+.rail__group + .rail__group { margin-top: var(--s-5); }
+.rail__grouplabel {
+  padding: 0 var(--s-3) var(--s-2);
+  font-size: var(--fs-2xs); font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-3);
+}
+
+.rail__link {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: 10px var(--s-3);
+  margin-bottom: 2px;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: var(--fs-body); font-weight: 500;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.rail__link:hover { background: var(--b06); color: var(--text); text-decoration: none; }
+.rail__link.is-active { background: var(--primary-15); color: var(--primary); font-weight: 600; }
+.rail__link .i { flex: none; }
+.rail__link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.rail__badge {
+  margin-left: auto; flex: none;
+  min-width: 20px; padding: 1px 6px;
+  border-radius: var(--r-full);
+  background: var(--danger); color: #fff;
+  font-size: var(--fs-2xs); font-weight: 700; text-align: center;
+}
+
+.rail__foot { padding: var(--s-3) var(--s-3) var(--s-5); border-top: 1px solid var(--w06); }
+
+.scrim {
+  position: fixed; inset: 0; z-index: 50;
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--t-base) var(--ease);
+}
+.scrim.is-open { opacity: 1; pointer-events: auto; }
+
+/* ==========================================================================
+   BOTTOM TAB BAR (mobile) — mirrors CustomBottomNavBar's 5 items
+   ========================================================================== */
+
+.tabbar {
+  position: fixed; inset: auto 0 0 0; z-index: 45;
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  height: calc(var(--bottomnav-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--nav-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid var(--w08);
+}
+
+.tabbar__item {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px;
+  color: var(--w38);
+  font-size: var(--fs-2xs); font-weight: 600;
+  transition: color var(--t-fast) var(--ease);
+}
+.tabbar__item:hover { color: var(--w70); text-decoration: none; }
+.tabbar__item.is-active { color: var(--primary); }
+.tabbar__item.is-active .i { transform: translateY(-1px) scale(1.06); }
+.tabbar__item .i { transition: transform var(--t-base) var(--ease-out); }
+
+/* ==========================================================================
+   RESPONSIVE — the breakpoint ladder
+   ========================================================================== */
+
+/* Tablet and up: roomier gutters */
+@media (min-width: 640px) {
+  .shell__content { padding-top: var(--s-6); }
+}
+
+/* Desktop: rail becomes permanent, bottom tabs and hamburger disappear */
+@media (min-width: 1024px) {
+  .shell { grid-template-columns: var(--rail-w) 1fr; }
+
+  .rail {
+    position: sticky; inset: auto; height: 100dvh;
+    width: auto; transform: none;
+  }
+  .rail__close, .topbar__menu { display: none; }
+
+  .shell__main { padding-bottom: 0; }
+  .tabbar { display: none; }
+  .scrim { display: none; }
+
+  .topbar { min-height: 72px; }
+  .shell__content { padding-bottom: var(--s-12); }
+}
+
+/* Wide desktop: let content breathe a little more */
+@media (min-width: 1600px) {
+  :root { --content-max: 1480px; }
+}

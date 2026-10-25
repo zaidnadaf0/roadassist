@@ -1,0 +1,136 @@
+{
+  "version": "m10-bench-v1",
+  "seed": 42,
+  "selection_rule": "max valid NDCG@3, tie Hit@1 then Hit@3, p95<50ms veto",
+  "latency_vetoed": [],
+  "rows": [
+    {
+      "model": "logreg",
+      "config": {
+        "C": 10.0,
+        "max_iter": 2000
+      },
+      "train_s": 0.02,
+      "Hit@1": 0.5429,
+      "Hit@3": 0.8533,
+      "NDCG@3": 0.7243,
+      "groups": 525,
+      "latency_ms": {
+        "mean_ms": 0.068,
+        "median_ms": 0.064,
+        "p95_ms": 0.088,
+        "n_sets": 525
+      },
+      "model_bytes": 906
+    },
+    {
+      "model": "grad_boosting",
+      "config": {
+        "max_iter": 200,
+        "learning_rate": 0.05
+      },
+      "train_s": 0.3,
+      "Hit@1": 0.4952,
+      "Hit@3": 0.8248,
+      "NDCG@3": 0.6882,
+      "groups": 525,
+      "latency_ms": {
+        "mean_ms": 0.871,
+        "median_ms": 0.869,
+        "p95_ms": 1.291,
+        "n_sets": 525
+      },
+      "model_bytes": 334987
+    },
+    {
+      "model": "random_forest",
+      "config": {
+        "n_estimators": 100,
+        "max_depth": null,
+        "min_samples_leaf": 1
+      },
+      "train_s": 1.71,
+      "Hit@1": 0.4514,
+      "Hit@3": 0.8,
+      "NDCG@3": 0.6546,
+      "groups": 525,
+      "latency_ms": {
+        "mean_ms": 5.87,
+        "median_ms": 5.79,
+        "p95_ms": 7.11,
+        "n_sets": 525
+      },
+      "model_bytes": 36340532
+    },
+    {
+      "model": "decision_tree",
+      "config": {
+        "max_depth": null
+      },
+      "train_s": 0.1,
+      "Hit@1": 0.4381,
+      "Hit@3": 0.7752,
+      "NDCG@3": 0.6331,
+      "groups": 525,
+      "latency_ms": {
+        "mean_ms": 0.064,
+        "median_ms": 0.057,
+        "p95_ms": 0.101,
+        "n_sets": 525
+      },
+      "model_bytes": 334491
+    },
+    {
+      "model": "knn",
+      "config": {
+        "n_neighbors": 31
+      },
+      "train_s": 0.0,
+      "Hit@1": 0.3638,
+      "Hit@3": 0.739,
+      "NDCG@3": 0.5816,
+      "groups": 525,
+      "latency_ms": {
+        "mean_ms": 1.415,
+        "median_ms": 1.391,
+        "p95_ms": 1.909,
+        "n_sets": 525
+      },
+      "model_bytes": 2518166
+    },
+    {
+      "model": "naive_bayes",
+      "config": {},
+      "train_s": 0.01,
+      "Hit@1": 0.2895,
+      "Hit@3": 0.6629,
+      "NDCG@3": 0.5054,
+      "groups": 525,
+      "latency_ms": {
+        "mean_ms": 0.236,
+        "median_ms": 0.219,
+        "p95_ms": 0.337,
+        "n_sets": 525
+      },
+      "model_bytes": 958
+    },
+    {
+      "model": "dummy",
+      "config": {
+        "strategy": "stratified"
+      },
+      "train_s": 0.0,
+      "Hit@1": 0.2533,
+      "Hit@3": 0.6457,
+      "NDCG@3": 0.4762,
+      "groups": 525,
+      "latency_ms": {
+        "mean_ms": 0.205,
+        "median_ms": 0.196,
+        "p95_ms": 0.252,
+        "n_sets": 525
+      },
+      "model_bytes": 475
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "schema": "m9-features-v1",
+  "feature_order": [
+    "distance_km",
+    "service_match",
+    "within_radius",
+    "rating",
+    "review_count",
+    "experience_years",
+    "service_radius_km",
+    "active_jobs",
+    "acceptance_rate_hist",
+    "completion_rate_hist",
+    "avg_response_min_hist",
+    "availability",
+    "hour_of_day",
+    "day_of_week",
+    "offer_round",
+    "eligible_count",
+    "cat__problem_category__battery",
+    "cat__problem_category__engine",
+    "cat__problem_category__flat-tyre",
+    "cat__problem_category__other",
+    "cat__problem_category__tow",
+    "cat__vehicle_type__bike",
+    "cat__vehicle_type__car",
+    "cat__vehicle_type__truck",
+    "cat__vehicle_type__van"
+  ],
+  "numeric": [
+    "distance_km",
+    "service_match",
+    "within_radius",
+    "rating",
+    "review_count",
+    "experience_years",
+    "service_radius_km",
+    "active_jobs",
+    "acceptance_rate_hist",
+    "completion_rate_hist",
+    "avg_response_min_hist",
+    "availability",
+    "hour_of_day",
+    "day_of_week",
+    "offer_round",
+    "eligible_count"
+  ],
+  "categorical": {
+    "problem_category": [
+      "battery",
+      "engine",
+      "flat-tyre",
+      "other",
+      "tow"
+    ],
+    "vehicle_type": [
+      "bike",
+      "car",
+      "truck",
+      "van"
+    ]
+  },
+  "scaling": {
+    "means": [
+      8.886441287502484,
+      1.0,
+      1.0,
+      4.297984729357668,
+      54.807101700207205,
+      13.821918197042377,
+      26.211376344696433,
+      1.1322414918679573,
+      0.45958962277539667,
+      0.8012189265135817,
+      9.080190741108682,
+      1.0,
+      13.326502228151345,
+      2.8505861315318897,
+      1.556385001844966,
+      12.618517782634612
+    ],
+    "stds": [
+      4.724294504175619,
+      1.0,
+      1.0,
+      0.2859008389465186,
+      46.69874715463298,
+      6.356073341717246,
+      7.937403912364248,
+      0.9274265342461409,
+      0.16338675764156396,
+      0.10316653365765174,
+      2.588546381388998,
+      1.0,
+      5.523640865348085,
+      2.0436710164641547,
+      2.106632965035031,
+      2.9066097246375033
+    ]
+  },
+  "impute_medians": {
+    "rating": 4.4,
+    "review_count": 34.0,
+    "experience_years": 14.0,
+    "avg_response_min_hist": 8.9
+  },
+  "forbidden_absent_from_order": [
+    "customer_lat",
+    "customer_lng",
+    "mechanic_id",
+    "tier",
+    "winner_response_min",
+    "y_completed"
+  ]
+}

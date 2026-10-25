@@ -1,0 +1,191 @@
+{
+  "winner": "logreg",
+  "overall_test": {
+    "Hit@1": 0.4855,
+    "Hit@3": 0.8264,
+    "NDCG@3": 0.6882,
+    "groups": 484
+  },
+  "slices": {
+    "problem_category=flat-tyre": {
+      "Hit@1": 0.453,
+      "NDCG@3": 0.6724,
+      "groups": 117
+    },
+    "problem_category=tow": {
+      "Hit@1": 0.5692,
+      "NDCG@3": 0.7476,
+      "groups": 65
+    },
+    "problem_category=battery": {
+      "Hit@1": 0.3789,
+      "NDCG@3": 0.6281,
+      "groups": 95
+    },
+    "problem_category=other": {
+      "Hit@1": 0.5682,
+      "NDCG@3": 0.7328,
+      "groups": 88
+    },
+    "problem_category=engine": {
+      "Hit@1": 0.4958,
+      "NDCG@3": 0.6863,
+      "groups": 119
+    },
+    "_band=2-5km": {
+      "Hit@1": 0.3878,
+      "NDCG@3": 0.4543,
+      "groups": 441
+    },
+    "_band=5-10km": {
+      "Hit@1": 0.1789,
+      "NDCG@3": 0.224,
+      "groups": 475
+    },
+    "_band=10km+": {
+      "Hit@1": 0.0628,
+      "NDCG@3": 0.0812,
+      "groups": 478
+    },
+    "_band=0-2km": {
+      "Hit@1": 0.3057,
+      "NDCG@3": 0.3354,
+      "groups": 229
+    },
+    "active_jobs=2": {
+      "Hit@1": 0.203,
+      "NDCG@3": 0.2453,
+      "groups": 473
+    },
+    "active_jobs=0": {
+      "Hit@1": 0.2564,
+      "NDCG@3": 0.3011,
+      "groups": 472
+    },
+    "active_jobs=1": {
+      "Hit@1": 0.2385,
+      "NDCG@3": 0.2801,
+      "groups": 478
+    },
+    "active_jobs=3": {
+      "Hit@1": 0.1191,
+      "NDCG@3": 0.1191,
+      "groups": 277
+    },
+    "_norating=False": {
+      "Hit@1": 0.4649,
+      "NDCG@3": 0.6386,
+      "groups": 484
+    },
+    "_norating=True": {
+      "Hit@1": 0.1118,
+      "NDCG@3": 0.1293,
+      "groups": 483
+    },
+    "offer_round=0": {
+      "Hit@1": 0.3119,
+      "NDCG@3": 0.3336,
+      "groups": 481
+    },
+    "offer_round=1": {
+      "Hit@1": 0.3686,
+      "NDCG@3": 0.3969,
+      "groups": 312
+    },
+    "offer_round=2": {
+      "Hit@1": 0.2088,
+      "NDCG@3": 0.251,
+      "groups": 182
+    },
+    "offer_round=3": {
+      "Hit@1": 0.2734,
+      "NDCG@3": 0.3197,
+      "groups": 128
+    },
+    "offer_round=4": {
+      "Hit@1": 0.1829,
+      "NDCG@3": 0.2259,
+      "groups": 82
+    },
+    "offer_round=6": {
+      "Hit@1": 0.1111,
+      "NDCG@3": 0.1894,
+      "groups": 45
+    },
+    "offer_round=7": {
+      "Hit@1": 0.2059,
+      "NDCG@3": 0.2577,
+      "groups": 34
+    },
+    "offer_round=8": {
+      "Hit@1": 0.1667,
+      "NDCG@3": 0.2192,
+      "groups": 24
+    },
+    "offer_round=9": {
+      "Hit@1": 0.3684,
+      "NDCG@3": 0.4348,
+      "groups": 19
+    },
+    "offer_round=10": {
+      "Hit@1": 0.3,
+      "NDCG@3": 0.3631,
+      "groups": 10
+    },
+    "offer_round=11": {
+      "Hit@1": 0.4,
+      "NDCG@3": 0.4,
+      "groups": 5
+    },
+    "offer_round=5": {
+      "Hit@1": 0.1148,
+      "NDCG@3": 0.2096,
+      "groups": 61
+    },
+    "offer_round=12": {
+      "Hit@1": 0.0,
+      "NDCG@3": 0.2103,
+      "groups": 3
+    },
+    "offer_round=13": {
+      "Hit@1": 0.0,
+      "NDCG@3": 0.0,
+      "groups": 2
+    },
+    "offer_round=14": {
+      "Hit@1": 0.0,
+      "NDCG@3": 0.6309,
+      "groups": 2
+    }
+  },
+  "miss_profile": {
+    "miss_rate": 0.5145,
+    "miss_mean_eligible": 11.97,
+    "hit_mean_eligible": 11.48,
+    "miss_mean_winner_distance": 6.08,
+    "hit_mean_winner_distance": 3.49,
+    "miss_round_dist": {
+      "1": 85,
+      "2": 35,
+      "3": 33,
+      "4": 20,
+      "0": 17,
+      "5": 14,
+      "6": 10,
+      "7": 8,
+      "9": 7,
+      "8": 5,
+      "10": 3,
+      "11": 2,
+      "14": 2,
+      "12": 1
+    },
+    "miss_category_dist": {
+      "flat-tyre": 61,
+      "engine": 58,
+      "battery": 57,
+      "other": 38,
+      "tow": 28
+    }
+  }
+}

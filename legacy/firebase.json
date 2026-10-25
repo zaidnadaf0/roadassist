@@ -1,0 +1,31 @@
+{
+  "//": "RoadAssist Firebase project config. `firebase deploy` reads this. Hosting serves this same folder, so the deployed site is byte-for-byte the one you open locally. Rules and indexes point at the files in this directory.",
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/README.md",
+      "**/*.rules",
+      "**/firestore.indexes.json"
+    ],
+    "rewrites": [
+      { "source": "**", "destination": "/index.html" }
+    ],
+    "headers": [
+      {
+        "source": "assets/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=3600" }
+        ]
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
+}

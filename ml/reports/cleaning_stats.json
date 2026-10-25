@@ -1,0 +1,11 @@
+{
+  "raw_rows": 35586,
+  "reasons": {
+    "invalid_customer_lat": 177,
+    "rating_out_of_range": 178
+  },
+  "removed_rows": 355,
+  "final_rows": 35231,
+  "final_requests": 3000,
+  "cleaner": "m9-clean-v1"
+}

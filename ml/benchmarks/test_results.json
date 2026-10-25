@@ -1,0 +1,93 @@
+{
+  "version": "m10-bench-v1",
+  "winner": "logreg",
+  "config": {
+    "C": 10.0,
+    "max_iter": 2000
+  },
+  "metrics": {
+    "Hit@1": 0.4855,
+    "Hit@3": 0.8264,
+    "NDCG@3": 0.6882,
+    "groups": 484,
+    "ROC_AUC": 0.8701
+  },
+  "latency_ms": {
+    "mean_ms": 0.102,
+    "median_ms": 0.097,
+    "p95_ms": 0.133,
+    "n_sets": 484
+  },
+  "model_bytes": 906,
+  "preprocessing": {
+    "medians": {
+      "rating": 4.4,
+      "review_count": 34.0,
+      "experience_years": 14.0,
+      "avg_response_min_hist": 8.9
+    },
+    "means": [
+      8.899710081510081,
+      1.0,
+      1.0,
+      4.297164307164307,
+      54.67250107250107,
+      13.815658515658516,
+      26.21196911196911,
+      1.130930930930931,
+      0.4593571428571428,
+      0.8011033033033034,
+      9.085015015015015,
+      1.0,
+      13.364693264693265,
+      2.8529815529815528,
+      1.5435435435435436,
+      12.572629772629773
+    ],
+    "stds": [
+      4.7297968344420305,
+      1.0,
+      1.0,
+      0.28619776687344106,
+      46.56208352498162,
+      6.3628347799388125,
+      7.94425467565613,
+      0.9271721351057939,
+      0.16295570400132856,
+      0.1030541383807251,
+      2.5836063354294607,
+      1.0,
+      5.5433502491201585,
+      1.940438368810453,
+      2.0891674122320087,
+      2.899448443791355
+    ],
+    "feature_order": [
+      "distance_km",
+      "service_match",
+      "within_radius",
+      "rating",
+      "review_count",
+      "experience_years",
+      "service_radius_km",
+      "active_jobs",
+      "acceptance_rate_hist",
+      "completion_rate_hist",
+      "avg_response_min_hist",
+      "availability",
+      "hour_of_day",
+      "day_of_week",
+      "offer_round",
+      "eligible_count",
+      "cat__problem_category__battery",
+      "cat__problem_category__engine",
+      "cat__problem_category__flat-tyre",
+      "cat__problem_category__other",
+      "cat__problem_category__tow",
+      "cat__vehicle_type__bike",
+      "cat__vehicle_type__car",
+      "cat__vehicle_type__truck",
+      "cat__vehicle_type__van"
+    ]
+  }
+}

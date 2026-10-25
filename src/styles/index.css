@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * RoadAssist base styles. The product uses a clean pearl-white claymorphism
+ * system so depth supports hierarchy without reducing readability.
+ */
+:root {
+  color-scheme: light;
+  --ra-surface-1: 251 252 254;
+  --ra-surface-2: 233 238 245;
+  --ra-clay-shadow: 12px 14px 28px rgb(149 161 181 / 0.28), -9px -9px 22px rgb(255 255 255 / 0.92);
+  --ra-clay-inset: inset 5px 5px 10px rgb(175 187 204 / 0.28), inset -5px -5px 10px rgb(255 255 255 / 0.90);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(circle at 8% -12%, rgb(105 120 217 / 0.16), transparent 32rem),
+    radial-gradient(circle at 92% 4%, rgb(184 194 244 / 0.18), transparent 30rem),
+    #f1f4f8;
+  color: #1d293b;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100%;
+}
+
+::selection {
+  background: rgb(105 120 217 / 0.25);
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #6978d9;
+  outline-offset: 3px;
+}
+
+.clay-surface {
+  box-shadow: var(--ra-clay-shadow);
+}
+
+.clay-inset {
+  box-shadow: var(--ra-clay-inset);
+}
+
+.clay-control {
+  box-shadow: var(--ra-clay-shadow);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.clay-control:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.clay-control:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--ra-clay-inset);
+}
+
+/* Keeps older page-specific cards and controls visually aligned with the
+ * shared clay system while they continue using the same semantic Tailwind
+ * tokens. */
+.bg-graphite-card {
+  box-shadow: var(--ra-clay-shadow);
+}
+
+button:not(.clay-control) {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  box-shadow: 7px 8px 16px rgb(149 161 181 / 0.22), -5px -5px 12px rgb(255 255 255 / 0.90);
+}
+
+button:not(.clay-control):active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--ra-clay-inset);
+}
+
+/* Subtle map-grid placeholder backdrop (echoes legacy map fallback art). */
+.map-grid {
+  background-image:
+    linear-gradient(rgb(93 108 132 / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(93 108 132 / 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
+}

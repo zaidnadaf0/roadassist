@@ -1,0 +1,28 @@
+rules_version = '2';
+// RoadAssist Storage rules (M3): owner-only uploads, image-only, 8 MB cap.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function isClaimAdmin() { return isSignedIn() && request.auth.token.admin == true; }
+    function isSafeImage() {
+      return request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+    // Per-user uploads (avatars, job photos): owner read/write, admins read.
+    match /users/{uid}/{allPaths=**} {
+      allow read: if isOwner(uid) || isClaimAdmin();
+      allow write: if isOwner(uid) && isSafeImage();
+      allow delete: if isOwner(uid) || isClaimAdmin();
+    }
+    // Mechanic workshop photos: same owner discipline keyed by mechanic UID.
+    match /mechanics/{uid}/{allPaths=**} {
+      allow read: if isOwner(uid) || isClaimAdmin();
+      allow write: if isOwner(uid) && isSafeImage();
+      allow delete: if isOwner(uid) || isClaimAdmin();
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

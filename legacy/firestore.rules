@@ -1,0 +1,95 @@
+rules_version = '2';
+
+/* ==========================================================================
+   RoadAssist — Cloud Firestore security rules
+
+   These rules describe the data this app ACTUALLY writes. Two collections:
+
+     appState/{uid}    one document per user, holding that user's whole app
+                       state tree. Private to its owner.
+     requests/{id}     individual service-request documents mirrored out of
+                       appState so they can be queried by mechanics and admins.
+
+   Deploy with:  firebase deploy --only firestore:rules
+
+   Role-based access is enforced via Firebase custom claims. Ensure that
+   custom claims are set for each user (e.g., via a Cloud Function on user creation).
+
+   ========================================================================== */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && request.auth.token.role == role;
+    }
+
+    /* Guard against a runaway client filling the database. Firestore's own
+       hard limit is 1 MiB per document; this keeps us well clear. */
+    function isReasonableSize() {
+      return request.resource.size() < 900000;
+    }
+
+    /* --------------------------------------------------------------------
+       appState/{uid} — the user's private state document.
+       Only ever readable and writable by the account that owns it.
+       -------------------------------------------------------------------- */
+    match /appState/{uid} {
+      allow read: if isOwner(uid);
+
+      allow create, update: if isOwner(uid)
+        && isReasonableSize()
+        && request.resource.data.keys().hasAll(['state'])
+        && request.resource.data.state is map;
+
+      allow delete: if isOwner(uid);
+    }
+
+    /* --------------------------------------------------------------------
+       requests/{id} — service requests, mirrored per document.
+
+       Readable by the request owner, mechanics, and admins.
+       Creatable only by the customer who owns the request.
+       Updatable by the request owner, mechanics, and admins (but note: only the
+       customer should update certain fields like ownerId; however, the app
+       currently only updates status and mechanicId via the mechanic and customer
+       portals, and admins via the admin portal. We rely on client-side validation
+       for now, but the rules ensure that only the owner can change the ownerId).
+
+       -------------------------------------------------------------------- */
+    match /requests/{requestId} {
+      allow read: if isSignedIn()
+        && (isOwner(resource.data.ownerId) || hasRole('mechanic') || hasRole('admin'));
+
+      allow create: if isSignedIn()
+        && isReasonableSize()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.keys().hasAll(['id', 'ownerId', 'status'])
+        && request.resource.data.status is string;
+
+      allow update: if isSignedIn()
+        && isReasonableSize()
+        && (isOwner(resource.data.ownerId) || hasRole('mechanic') || hasRole('admin'))
+        && request.resource.data.ownerId == resource.data.ownerId;
+
+      allow delete: if isSignedIn() && isOwner(resource.data.ownerId);
+    }
+
+    /* --------------------------------------------------------------------
+       Everything else is denied. Adding a collection means adding a rule —
+       which is the behaviour you want, rather than a wildcard that quietly
+       exposes tomorrow's data.
+       -------------------------------------------------------------------- */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

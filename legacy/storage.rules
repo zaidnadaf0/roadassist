@@ -1,0 +1,38 @@
+rules_version = '2';
+
+/* ==========================================================================
+   RoadAssist — Cloud Storage security rules
+
+   The website as written stores no user files in Cloud Storage — avatars and
+   photos are remote URLs or inline SVG. These rules exist so that IF you later
+   add uploads (a photo of the breakdown, a mechanic's licence scan), the
+   bucket is locked down from day one instead of world-writable.
+
+   Deploy with:  firebase deploy --only storage
+   ========================================================================== */
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /* Cap uploads at 8 MB and require an image content-type. */
+    function isSafeImage() {
+      return request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    /* users/{uid}/… — a private area each account owns. */
+    match /users/{uid}/{allPaths=**} {
+      allow read:  if isSignedIn() && request.auth.uid == uid;
+      allow write: if isSignedIn() && request.auth.uid == uid && isSafeImage();
+    }
+
+    /* Deny everything not explicitly matched above. */
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

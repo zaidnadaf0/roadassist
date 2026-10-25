@@ -1,0 +1,101 @@
+{
+  "synthetic": true,
+  "synthetic_warning": "Development data with seeded distributions (seed 42). NOT production history.",
+  "generator": {
+    "generator": "m9-gen-v1",
+    "seed": 42,
+    "n_requests_attempted": 3000,
+    "n_requests": 3000,
+    "n_candidate_rows": 35586,
+    "synthetic": true,
+    "sha256_requests": "06616cdc3a5d11bbbf8bc8c59aea72ecbf303af2ad6ee2412e68fb8fd6760e95",
+    "sha256_candidates": "ea492fa166fb06152a7fdd6604c54554dbfa6c6de00652bc76fdf3d13efe682c"
+  },
+  "cleaning": {
+    "raw_rows": 35586,
+    "reasons": {
+      "invalid_customer_lat": 177,
+      "rating_out_of_range": 178
+    },
+    "removed_rows": 355,
+    "final_rows": 35231,
+    "final_requests": 3000,
+    "cleaner": "m9-clean-v1"
+  },
+  "rows_final": 35231,
+  "requests_final": 3000,
+  "target_distribution": {
+    "positives": 2971,
+    "negatives": 32260
+  },
+  "missing_rates": {
+    "rating": 0.29965087564928616,
+    "review_count": 0.1357327353750958,
+    "experience_years": 0.0678663676875479,
+    "avg_response_min_hist": 0.0
+  },
+  "feature_order": [
+    "distance_km",
+    "service_match",
+    "within_radius",
+    "rating",
+    "review_count",
+    "experience_years",
+    "service_radius_km",
+    "active_jobs",
+    "acceptance_rate_hist",
+    "completion_rate_hist",
+    "avg_response_min_hist",
+    "availability",
+    "hour_of_day",
+    "day_of_week",
+    "offer_round",
+    "eligible_count",
+    "cat__problem_category__battery",
+    "cat__problem_category__engine",
+    "cat__problem_category__flat-tyre",
+    "cat__problem_category__other",
+    "cat__problem_category__tow",
+    "cat__vehicle_type__bike",
+    "cat__vehicle_type__car",
+    "cat__vehicle_type__truck",
+    "cat__vehicle_type__van"
+  ],
+  "n_features": 25,
+  "splits": {
+    "train": {
+      "requests": 1991
+    },
+    "valid": {
+      "requests": 525
+    },
+    "test": {
+      "requests": 484
+    }
+  },
+  "baseline_test": {
+    "Hit@1": 0.33264462809917356,
+    "NDCG@1": 0.33264462809917356,
+    "Hit@3": 0.7004132231404959,
+    "NDCG@3": 0.5476382678940447,
+    "Hit@5": 0.8140495867768595,
+    "NDCG@5": 0.5944962522426873,
+    "groups": 484,
+    "pairs": 5679,
+    "ROC_AUC": 0.7765731935064485,
+    "accuracy": 0.5548512061982743
+  },
+  "leakage_checks": {
+    "forbidden_columns_absent_from_features": true,
+    "history_aggregates_precomputed_before_request": true,
+    "no_request_spans_splits": true,
+    "current_job_outcomes_excluded": true
+  },
+  "limitations": [
+    "All outcomes are simulated from a latent accept model; real acceptance behavior WILL differ.",
+    "30-day window, single city, 40-mechanic pool: coverage is narrow by design.",
+    "No cancellations, disputes, traffic, weather, or surge effects modeled.",
+    "Night/urgency effects are coarse (hour buckets only).",
+    "Scalers in feature_schema.json are fit on the full clean set for schema purposes; M10 MUST re-fit on train only."
+  ]
+}
