@@ -89,7 +89,15 @@ function TrackingView({ req, preview = false }: { req: ServiceRequest; preview?:
     ? distanceKm({ lat: req.customerLat, lng: req.customerLng }, { lat: req.mechanicLat, lng: req.mechanicLng })
     : null;
   const locationUpdatedAt = typeof req.mechanicLocationUpdatedAt === 'number' ? req.mechanicLocationUpdatedAt : null;
-  const locationStale = locationUpdatedAt != null && Date.now() - locationUpdatedAt > 5 * 60_000;
+  // Ticking clock: staleness stays honest between snapshot emissions and the
+  // render stays pure (Date.now() only inside effects/intervals).
+  const [nowMs, setNowMs] = useState(0);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const t = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const locationStale = locationUpdatedAt != null && nowMs > 0 && nowMs - locationUpdatedAt > 5 * 60_000;
 
   async function onCancel() {
     if (preview) return;
@@ -274,7 +282,10 @@ export function TrackingPage() {
   // /track without id: jump to the live request, then use the same labelled
   // preview records as the dashboard when no live records exist.
   const usingDemo = !id && demoMode;
-  const displayMine = usingDemo ? getDemoCustomerRequests() : (mine ?? []);
+  const displayMine = useMemo(
+    () => (usingDemo ? getDemoCustomerRequests() : (mine ?? [])),
+    [usingDemo, mine],
+  );
   const live = useMemo(() => displayMine.find((r) => ['requested', 'accepted', 'on-the-way', 'arrived', 'service'].includes(r.status)) ?? null, [displayMine]);
 
   useEffect(() => {

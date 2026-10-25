@@ -18,6 +18,19 @@ npm run build
 npm run build:functions
 ```
 
+## Testing
+
+There are two test layers:
+
+| Layer | Command | Needs |
+| --- | --- | --- |
+| Unit suite (`src/`, `functions/src/`, rules-linter regressions) | `npm test` | Nothing — runs in seconds |
+| Firestore rules integration (`emulator/`) | `npm run test:emulator:rules` | Java; boots the Firebase emulator itself via `firebase-tools` |
+
+The integration suites prove the security boundary against the real rules engine: request idempotency, offer ownership, server-only assignment, concurrent accept races, active-job limits, invalid transitions, notifications and admin boundaries. They only run under the emulator — `npm test` will skip them.
+
+Pushes and pull requests run typecheck, lint, the unit suite, the rules linter, and both builds in CI (`.github/workflows/ci.yml`).
+
 The Firebase project configuration belongs in `.env.local`. Use `.env.example` as the template. Never commit `.env.local`.
 
 ## Main routes

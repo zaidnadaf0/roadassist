@@ -49,8 +49,8 @@ describe('check-rules.mjs — M3 invariants', () => {
       writeFileSync(tmpFile, broken, 'utf8');
       const res = runLinter(tmpFile);
       expect(res.status).not.toBe(0);
-      expect(res.stdout).toMatch(/FAIL  R016/);
-      expect(res.stdout).toMatch(/FAIL  R030/);
+      expect(res.stdout).toMatch(/FAIL {2}R016/);
+      expect(res.stdout).toMatch(/FAIL {2}R030/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

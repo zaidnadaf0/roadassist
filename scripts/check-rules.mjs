@@ -39,7 +39,7 @@ function matchBlock(pathPattern) {
   return src.slice(open, i);
 }
 
-function updateBody(block, collection) {
+function updateBody(block) {
   if (!block) return '';
   const start = block.indexOf('allow update:');
   const end = block.indexOf('allow delete:', start);

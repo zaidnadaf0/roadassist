@@ -12,8 +12,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:emulator": "vitest run --config vitest.emulator.config.ts",
+    "test:emulator:rules": "firebase emulators:exec --only firestore --project roadassist-9c223 \"npm run test:emulator\"",
+    "lint": "eslint .",
     "lint:rules": "node scripts/check-rules.mjs",
     "build:functions": "npm --prefix functions run build"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "firebase": "^12.19.0",
@@ -24,6 +29,7 @@
     "react-router-dom": "^7.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@firebase/rules-unit-testing": "^5.0.2",
     "@opentelemetry/api": "^1.9.1",
     "@types/leaflet": "^1.9.22",
@@ -32,10 +38,16 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
     "firebase-admin": "^14.5.0",
+    "firebase-tools": "^15.34.1",
+    "globals": "^17.13.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.2",
+    "typescript-eslint": "^8.72.0",
     "vite": "^5.4.21",
     "vitest": "^4.1.11"
   }

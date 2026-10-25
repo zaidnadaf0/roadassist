@@ -17,7 +17,6 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   Timestamp,
-  collection,
   doc,
   getDoc,
   serverTimestamp,

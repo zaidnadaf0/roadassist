@@ -154,7 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       created = cred.user;
     } catch (err) {
-      throw new Error(mapAuthError(err));
+      throw new Error(mapAuthError(err), { cause: err });
     }
     // Profile foundation: customer-only role (see userProfile.ts contract).
     try {
@@ -191,7 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsAdmin(admin);
       return admin ? '/admin' : homeForHint(role);
     } catch (err) {
-      throw new Error(mapAuthError(err));
+      throw new Error(mapAuthError(err), { cause: err });
     }
   }, []);
 
@@ -211,7 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await sendPasswordResetEmail(auth, email.trim());
     } catch (err) {
-      throw new Error(mapAuthError(err));
+      throw new Error(mapAuthError(err), { cause: err });
     }
   }, []);
 
@@ -222,7 +222,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await sendEmailVerification(current);
     } catch (err) {
-      throw new Error(mapAuthError(err));
+      throw new Error(mapAuthError(err), { cause: err });
     }
   }, []);
 

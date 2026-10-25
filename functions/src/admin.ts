@@ -58,7 +58,6 @@ export const revokeAdminRole = functions.https.onCall(async (data, context) => {
   requireCallerAdmin(context);
   const uid = requireTargetUid(data);
   await admin.auth().setCustomUserClaims(uid, {});
-  let roleHintSynced = false;
   try {
     const ref = admin.firestore().collection('users').doc(uid);
     const snap = await ref.get();
@@ -67,9 +66,6 @@ export const revokeAdminRole = functions.https.onCall(async (data, context) => {
         { role: 'customer', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
         { merge: true },
       );
-      roleHintSynced = true;
-    } else {
-      roleHintSynced = true;
     }
   } catch (err) {
     console.error(`[revokeAdminRole] ${uid}: claim cleared, role-hint sync failed`, err);
@@ -86,5 +82,5 @@ export const revokeAdminRole = functions.https.onCall(async (data, context) => {
     console.error(`[revokeAdminRole] ${uid}: audit event failed`, err);
   }
   console.log(`[revokeAdminRole] ${uid}: admin revoked by ${context.auth?.uid}`);
-  return { success: true, uid, roleHintSynced };
+  return { success: true, uid, roleHintSynced: true };
 });

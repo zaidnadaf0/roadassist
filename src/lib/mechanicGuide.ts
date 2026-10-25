@@ -242,7 +242,7 @@ export function triageSafety(text: string): SafetyTriage {
  * fallback without rendering untrusted content.
  */
 export function parseUntrustedGuideResponse(raw: unknown, userText: string): GuideReply | null {
-  let value: UntrustedGuideResponse = {};
+  let value: UntrustedGuideResponse;
   if (typeof raw === 'string') {
     try {
       const parsed = JSON.parse(raw) as unknown;

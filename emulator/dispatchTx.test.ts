@@ -10,7 +10,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { initializeApp } from 'firebase-admin/app';
-import { FieldValue, Timestamp, getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { Timestamp, getFirestore, type Firestore } from 'firebase-admin/firestore';
 import {
   acceptOfferTx,
   createOfferBatch,
