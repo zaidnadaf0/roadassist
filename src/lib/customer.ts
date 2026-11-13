@@ -13,6 +13,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
   type DocumentData,
   type Firestore,
   type Unsubscribe,
@@ -72,6 +73,29 @@ export interface ServiceRequest {
   cancellationReason?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
+  // ---- Repair estimate (mechanic submits, customer approves/rejects) ----
+  // Stored names are `estimated*` — they are the names firestore.rules
+  // validates and the names submitEstimate() writes. Keep them identical:
+  // a renamed field is silently absent at runtime, never a type error.
+  /** Mechanic's estimated repair cost (cents). Submitted before completion. */
+  estimatedAmountCents?: number | null;
+  /** Mechanic's estimated repair duration (minutes). */
+  estimatedDurationMin?: number | null;
+  /** Mechanic's free-text diagnosis. */
+  estimateDiagnosis?: string | null;
+  /** Estimate lifecycle: pending -> approved | rejected. Customer-owned decision. */
+  estimateStatus?: 'pending' | 'approved' | 'rejected' | null;
+  /** Epoch millis when the customer approved/rejected (rules require a number). */
+  estimateApprovedAt?: number | null;
+  // ---- Offline payment recording (separate from completion and approval) ----
+  /** Payment method recorded by an authorized actor. Not independently verified. */
+  paymentMethod?: 'cash' | 'upi' | null;
+  /** Payment status. The rules only ever allow 'paid' (one-way recording). */
+  paymentStatus?: 'pending' | 'paid' | null;
+  /** Epoch millis when the payment was recorded. */
+  paidAt?: number | null;
+  /** UID of the authorized actor who recorded the payment. */
+  paidBy?: string | null;
 }
 
 /** Customer-safe mechanic preview (mirrors publicMechanics projection). */
@@ -242,13 +266,24 @@ export async function createRequest(customerId: string, r: NewRequest, requestId
   const d = requireDb();
   const ref = requestId ? doc(d, 'requests', requestId) : doc(collection(d, 'requests'));
   if (requestId) {
-    const existing = await getDoc(ref);
-    if (existing.exists()) {
-      const data = existing.data() as Partial<ServiceRequest>;
+    // Idempotency pre-read. A MISSING request doc is unreadable by design —
+    // the request read rule matches on resource fields, which a nonexistent
+    // document cannot satisfy — so the read fails with permission-denied.
+    // That is exactly the "fresh create" case: proceed to the write, which
+    // the create rule fully validates. An EXISTING doc is owned-readable,
+    // so the retry/conflict equality check below still works.
+    let existingData: Partial<ServiceRequest> | null = null;
+    try {
+      const existing = await getDoc(ref);
+      if (existing.exists()) existingData = existing.data() as Partial<ServiceRequest>;
+    } catch {
+      existingData = null;
+    }
+    if (existingData) {
       if (
-        data.customerId === customerId &&
-        data.vehicleId === r.vehicleId &&
-        data.problemText === r.problemText.trim()
+        existingData.customerId === customerId &&
+        existingData.vehicleId === r.vehicleId &&
+        existingData.problemText === r.problemText.trim()
       ) {
         return ref.id;
       }
@@ -344,6 +379,53 @@ export async function rateRequest(id: string, rating: number, comment?: string):
   }
 }
 
+/**
+ * Customer approves or rejects a mechanic's repair estimate.
+ * Only the request-owning customer may set estimateStatus to approved/rejected.
+ */
+export type ApproveRejectEstimateResult =
+  | 'approved'
+  | 'rejected'
+  | 'not_found'
+  | 'not_assigned'
+  | 'invalid_state'
+  | 'forbidden'
+  | 'error';
+
+export async function approveRejectEstimate(
+  id: string,
+  customerId: string,
+  decision: 'approve' | 'reject',
+): Promise<ApproveRejectEstimateResult> {
+  try {
+    const d = requireDb();
+    const ref = doc(d, 'requests', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return 'not_found' as const;
+    const data = snap.data() as ServiceRequest;
+    if (data.customerId !== customerId) return 'not_assigned' as const;
+    if (data.status === 'completed' || data.status === 'cancelled') return 'invalid_state' as const;
+    if (data.estimateStatus === 'approved' || data.estimateStatus === 'rejected') return 'invalid_state' as const;
+
+    const nextStatus = decision === 'approve' ? 'approved' : 'rejected';
+    await updateDoc(ref, {
+      // The decision verb is not the stored state: firestore.rules only accepts
+      // 'approved' | 'rejected', so writing 'approve'/'reject' was always denied.
+      estimateStatus: nextStatus,
+      // Must be a NUMBER: firestore.rules validates
+      // `estimateApprovedAt is number`, and a serverTimestamp() sentinel is
+      // evaluated as a Timestamp, so the write would be denied outright.
+      estimateApprovedAt: Date.now(),
+      updatedAt: serverTimestamp(),
+    });
+    return nextStatus;
+  } catch (e) {
+    const code = (e as { code?: string } | null)?.code ?? '';
+    if (code.includes('permission-denied') || code.includes('PERMISSION_DENIED')) return 'forbidden';
+    return 'error';
+  }
+}
+
 /* ---------------- public mechanics ---------------- */
 
 export function watchPublicMechanics(
@@ -419,23 +501,114 @@ export async function markNotificationRead(uid: string, id: string): Promise<boo
 }
 
 /**
- * Mark every unread item read (one write per item; rules permit exactly
- * the {read} shape). Returns counts for honest UI copy. Pure counter
- * helper `countUnread` is unit-tested.
+ * Set one vehicle as the single default in ONE atomic batch (unset the
+ * previous default and set the new one together) — a half-applied default
+ * is impossible. Ownership checks stay per-document in the rules. Pure
+ * ownership model unchanged.
+ */
+export async function setDefaultVehicle(id: string, previousDefaultId?: string | null): Promise<boolean> {
+  try {
+    const d = requireDb();
+    const batch = writeBatch(d);
+    if (previousDefaultId && previousDefaultId !== id) {
+      batch.update(doc(d, 'vehicles', previousDefaultId), { isDefault: false });
+    }
+    batch.update(doc(d, 'vehicles', id), { isDefault: true });
+    await batch.commit();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mark every unread item read in ONE atomic batch (rules permit exactly the
+ * {read} shape; ≤50 ops fits the batch limit with room to spare). All-or-
+ * nothing: on success every id is marked, on failure none are. Returns
+ * counts for honest UI copy. Pure counter helper `countUnread` is
+ * unit-tested.
  */
 export async function markAllNotificationsRead(uid: string, ids: string[]): Promise<{ marked: number; failed: number }> {
-  let marked = 0;
-  let failed = 0;
-  for (const id of ids.slice(0, 50)) {
-    if (await markNotificationRead(uid, id)) marked++;
-    else failed++;
+  const targets = ids.slice(0, 50);
+  if (targets.length === 0) return { marked: 0, failed: 0 };
+  try {
+    const d = requireDb();
+    const batch = writeBatch(d);
+    for (const id of targets) {
+      batch.update(doc(d, 'notifications', uid, 'items', id), { read: true });
+    }
+    await batch.commit();
+    return { marked: targets.length, failed: 0 };
+  } catch {
+    return { marked: 0, failed: targets.length };
   }
-  return { marked, failed };
 }
 
 /** Pure unread counter — tested. */
 export function countUnread(items: AppNotification[]): number {
   return items.filter((n) => !n.read).length;
+}
+
+/**
+ * Default-vehicle continuity after a delete: when the deleted vehicle held
+ * the default flag, the first remaining vehicle becomes the default so the
+ * fleet never ends up with zero defaults. Returns the id to promote, or
+ * null when nothing must change. Pure — unit-tested.
+ */
+export function nextDefaultAfterDelete(
+  deleted: { id: string; isDefault?: boolean } | null | undefined,
+  remaining: { id: string }[],
+): string | null {
+  if (!deleted?.isDefault) return null;
+  return remaining[0]?.id ?? null;
+}
+
+/* ------------- notification routing (trusted-path, portal-safe) ------------- */
+
+export type NotificationPortal = 'customer' | 'mechanic' | 'admin';
+
+const CUSTOMER_ROUTE_RE =
+  /^\/(app|services|guide|request|mechanics|mechanic|map|track|history|vehicles|emergency|notifications|profile|settings)(\/|$|\?)/;
+
+/**
+ * True when `path` is a plain internal SPA route the given portal may open.
+ * Rejects external URLs, protocol-relative URLs, backslash tricks,
+ * traversal segments, oversized values, and characters outside the routing
+ * charset. Pure — unit-tested.
+ */
+export function isInternalNotificationPath(path: unknown, portal: NotificationPortal): boolean {
+  if (typeof path !== 'string' || path.length === 0 || path.length > 200) return false;
+  if (!path.startsWith('/') || path.startsWith('//')) return false;
+  if (path.includes('://') || path.includes('\\')) return false;
+  if (!/^[A-Za-z0-9/_?=&.#-]+$/.test(path)) return false;
+  if (path.split(/[?#]/)[0].split('/').includes('..')) return false;
+  switch (portal) {
+    case 'customer':
+      return CUSTOMER_ROUTE_RE.test(path);
+    case 'mechanic':
+      return (path === '/m' || path.startsWith('/m/')) && !path.startsWith('/mechanic');
+    case 'admin':
+      return path === '/admin' || path.startsWith('/admin/');
+  }
+}
+
+/**
+ * Role-safe notification destination. Prefers the trusted server-written
+ * `path` when it is an internal route this portal may open; otherwise falls
+ * back to a portal-appropriate detail route for the request. Returns null
+ * when nothing safe exists (callers render no link). Pure — unit-tested.
+ */
+export function notificationHref(
+  n: Pick<AppNotification, 'requestId' | 'path'>,
+  portal: NotificationPortal = 'customer',
+): string | null {
+  const trusted = typeof n.path === 'string' ? n.path : null;
+  if (trusted && isInternalNotificationPath(trusted, portal)) return trusted;
+  const id = typeof n.requestId === 'string' ? n.requestId.trim() : '';
+  if (!id) return null;
+  if (portal === 'mechanic') return `/m/job/${encodeURIComponent(id)}`;
+  if (portal === 'admin') return `/admin/requests/${encodeURIComponent(id)}`;
+  return `/track/${encodeURIComponent(id)}`;
 }
 
 /* ---------------- profile ---------------- */

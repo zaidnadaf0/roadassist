@@ -107,5 +107,6 @@ export const PUBLIC_LINKS: NavItem[] = [
   { route: '/features', icon: 'star', label: 'Features' },
   { route: '/pricing', icon: 'dollar', label: 'Pricing' },
   { route: '/about', icon: 'info', label: 'About' },
+  { route: '/experience', icon: 'navigation', label: 'Live Experience' },
   { route: '/contact', icon: 'phone', label: 'Contact' },
 ];

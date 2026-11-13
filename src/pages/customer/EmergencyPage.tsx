@@ -7,13 +7,13 @@ export function EmergencyPage() {
     <div className="mx-auto max-w-2xl">
       <PageHeader title="Emergency" description="If anyone is hurt, call emergency services first — then request help." />
       <div className="grid gap-4">
-        <Card>
-          <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-steel-500">India universal emergency</p>
+        <Card className="border-danger/30 bg-danger/5">
+          <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-danger">India universal emergency</p>
           <a href="tel:112" className="mt-1 block text-4xl font-extrabold tracking-tight text-cream">112</a>
           <p className="mt-1 text-sm text-steel-300">Police · Fire · Ambulance. Free from any phone.</p>
           <div className="mt-3">
             <a href="tel:112">
-              <Button>Call 112 now</Button>
+              <Button variant="danger">Call 112 now</Button>
             </a>
           </div>
         </Card>

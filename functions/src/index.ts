@@ -5,6 +5,7 @@ import type { MechanicProfile, ServiceRequest } from './types';
 import { buildPublicProjection } from './projection';
 import { acceptOfferTx, createOfferBatch, declineOfferTx, rematchRequest, supersedePendingOffers, sweepRequest } from './dispatch';
 import { noticeForOffer, noticesForTransition, putNotification } from './notifications';
+import { aggregateCompletedRating } from './ratings';
 
 initializeApp();
 const db = getFirestore();
@@ -46,15 +47,29 @@ export const onMechanicWrite = functions.firestore
  * (so customers can call without reading `mechanics`), and live-location
  * cleanup when a job completes. All idempotent under retries.
  */
-export const onRequestWrite = functions.firestore
-  .document('requests/{requestId}')
+export const onRequestWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore.document('requests/{requestId}')
   .onWrite(async (change, context) => {
     const requestId = context.params.requestId as string;
     const before = change.before.exists ? (change.before.data() as ServiceRequest) : null;
     const after = change.after.exists ? (change.after.data() as ServiceRequest) : null;
     if (!after) return;
     if (!before) return; // creates need no server follow-ups in M3
-    await maybeAggregateRating(requestId, before, after);
+    await aggregateCompletedRating(db, requestId, after);
+    if (after.status === 'cancelled' && before.status !== 'cancelled') {
+      try {
+        await supersedePendingOffers(db, requestId);
+      } catch (err) {
+        // Re-throw so Cloud Functions retries transient cleanup failures under
+        // the trigger's failurePolicy (retry). Every step in this handler —
+        // including supersedePendingOffers — is idempotent under re-delivery:
+        // a repeated run only flips whatever offers are still pending and can
+        // never reopen or rematch a cancelled request.
+        console.error(`[dispatch] ${requestId}: cancellation offer cleanup failed:`, err);
+        throw err;
+      }
+    }
     await maybeAttachMechanicPhone(requestId, before, after);
     await maybeClearMechanicLiveLocation(requestId, before, after);
     await maybeSupersedeOnAccept(requestId, before, after);
@@ -91,41 +106,6 @@ async function maybeNotifyTransition(before: ServiceRequest, after: ServiceReque
   } catch (err) {
     console.error('[notify] transition fan-out failed:', err);
   }
-}
-
-async function maybeAggregateRating(
-  requestId: string,
-  before: ServiceRequest,
-  after: ServiceRequest,
-): Promise<void> {
-  if (after.status !== 'completed') return;
-  const rating = after.rating;
-  if (typeof rating !== 'number' || !(rating >= 1 && rating <= 5)) return;
-  const mechanicId = after.mechanicId;
-  if (!mechanicId) return;
-  if (before.rating === rating) return;
-  const hadPrior = typeof before.rating === 'number' && before.mechanicId === mechanicId;
-  const delta = hadPrior ? rating - (before.rating as number) : rating;
-  const mechRef = db.collection('mechanics').doc(mechanicId);
-  try {
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(mechRef);
-      if (!snap.exists) throw new Error('mechanic-missing');
-      const cur = snap.data() as MechanicProfile;
-      const count0 = typeof cur.reviewCount === 'number' ? cur.reviewCount : 0;
-      const avg0 = typeof cur.rating === 'number' ? cur.rating : 0;
-      const count1 = hadPrior ? count0 : count0 + 1;
-      const avg1 = count1 > 0 ? Math.round(((avg0 * count0 + delta) / count1) * 10) / 10 : 0;
-      tx.update(mechRef, { rating: avg1, reviewCount: count1 });
-    });
-  } catch (err: unknown) {
-    if (err instanceof Error && err.message === 'mechanic-missing') return;
-    throw err;
-  }
-  await db.collection('requests').doc(requestId).set(
-    { ratingAggregated: true, updatedAt: new Date() },
-    { merge: true },
-  );
 }
 
 async function maybeAttachMechanicPhone(

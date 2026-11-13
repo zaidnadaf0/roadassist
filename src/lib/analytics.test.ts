@@ -3,6 +3,7 @@ import {
   demand,
   earnings,
   earningsByDay,
+  estimatePaymentSummary,
   inWindow,
   mechanicPerf,
   normalizeRequests,
@@ -168,3 +169,91 @@ describe('toCsv (escaping)', () => {
     expect(csv).toBe('a,b\n"x,y","q""q"\nplain,\n"line\nbreak",5');
   });
 });
+
+describe('toCsv (spreadsheet formula injection guard)', () => {
+  it('prefixes dangerous leading characters with an apostrophe', () => {
+    const csv = toCsv(['a', 'b'], [['=cmd()', '+1'], ['-2+3', '@SUM(A1)'], ['\tTAB', 'safe']]);
+    expect(csv).toContain("'=cmd()");
+    expect(csv).toContain("'+1");
+    expect(csv).toContain("'-2+3");
+    expect(csv).toContain("'@SUM(A1)");
+    expect(csv).toContain("'\tTAB");
+    expect(csv).toContain('safe');
+  });
+
+  it('leaves plain values and numbers untouched', () => {
+    const csv = toCsv(['a'], [['plain text'], [42], [null]]);
+    expect(csv).toBe('a\nplain text\n42\n');
+  });
+});
+
+describe('estimatePaymentSummary (recorded, never "verified")', () => {
+  it('measures nothing on empty input — null totals, not zero rupees', () => {
+    expect(estimatePaymentSummary([])).toEqual({
+      totalEstimates: 0,
+      estimatesByStatus: { pending: 0, approved: 0, rejected: 0 },
+      totalEstimatedAmountCents: null,
+      estimatesWithAmount: 0,
+      totalApprovedEstimateAmountCents: null,
+      approvedEstimatesWithAmount: 0,
+      cashPayments: 0,
+      upiPayments: 0,
+      pendingPayments: 0,
+      paidPayments: 0,
+    });
+  });
+
+  it('counts estimates by status and sums only priced ones', () => {
+    const s = estimatePaymentSummary([
+      row({ id: 'a', status: 'service', estimateStatus: 'pending', estimatedAmountCents: 49_900 }),
+      row({ id: 'b', status: 'completed', estimateStatus: 'approved', estimatedAmountCents: 61_000 }),
+      row({ id: 'c', status: 'completed', estimateStatus: 'rejected', estimatedAmountCents: 12_500 }),
+      // Approvable with no priced amount: counted as an estimate, never as ₹0.
+      row({ id: 'd', status: 'arrived', estimateStatus: 'pending' }),
+      // No estimate at all: contributes nothing to estimate metrics.
+      row({ id: 'e', status: 'requested' }),
+    ]);
+    expect(s.totalEstimates).toBe(4);
+    expect(s.estimatesByStatus).toEqual({ pending: 2, approved: 1, rejected: 1 });
+    expect(s.totalEstimatedAmountCents).toBe(49_900 + 61_000 + 12_500);
+    expect(s.estimatesWithAmount).toBe(3);
+    expect(s.totalApprovedEstimateAmountCents).toBe(61_000);
+    expect(s.approvedEstimatesWithAmount).toBe(1);
+  });
+
+  it('ignores non-numeric and negative estimated amounts', () => {
+    const s = estimatePaymentSummary([
+      row({ id: 'a', status: 'service', estimateStatus: 'pending', estimatedAmountCents: null }),
+      row({ id: 'b', status: 'service', estimateStatus: 'pending', estimatedAmountCents: -100 }),
+      row({ id: 'c', status: 'service', estimateStatus: 'pending', estimatedAmountCents: 100.6 }),
+    ]);
+    expect(s.estimatesWithAmount).toBe(1);
+    expect(s.totalEstimatedAmountCents).toBe(101);
+    expect(s.totalApprovedEstimateAmountCents).toBeNull();
+  });
+
+  it('counts recorded cash/UPI payments and separates paid from awaiting', () => {
+    const s = estimatePaymentSummary([
+      row({ id: 'a', status: 'completed', amountCents: 49_900, paymentMethod: 'cash', paymentStatus: 'paid', paidAt: 1 }),
+      row({ id: 'b', status: 'completed', amountCents: 25_000, paymentMethod: 'upi', paymentStatus: 'paid', paidAt: 2 }),
+      // Completed, nothing recorded yet → the only reachable "pending" set.
+      row({ id: 'c', status: 'completed', amountCents: 10_000 }),
+      // A live job is not "pending payment": it is not billable yet.
+      row({ id: 'd', status: 'service' }),
+    ]);
+    expect(s.cashPayments).toBe(1);
+    expect(s.upiPayments).toBe(1);
+    expect(s.paidPayments).toBe(2);
+    expect(s.pendingPayments).toBe(1);
+  });
+
+  it('never treats a recorded payment as verified revenue (no verified counter exists)', () => {
+    const s = estimatePaymentSummary([
+      row({ id: 'a', status: 'completed', amountCents: 49_900, paymentMethod: 'cash', paymentStatus: 'paid', paidAt: 1, paidBy: 'mech-1' }),
+    ]);
+    expect(s.paidPayments).toBe(1);
+    expect(Object.keys(s)).not.toContain('verifiedPayments');
+    expect(Object.keys(s)).not.toContain('verifiedRevenueCents');
+  });
+});
+

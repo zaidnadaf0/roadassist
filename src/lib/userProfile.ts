@@ -50,3 +50,17 @@ export function homeForHint(role: ProfileHint | null): string {
   if (role === 'admin') return '/admin';
   return '/app';
 }
+
+/** Resolve a post-login destination without treating profile hints as authority. */
+export function resolveAuthHome(
+  role: ProfileHint | null,
+  isAdmin: boolean,
+  portal: 'customer' | 'mechanic' | 'admin',
+  hasMechanicRecord = false,
+): string {
+  if (isAdmin) return '/admin';
+  if (hasMechanicRecord) return '/m';
+  if (portal === 'mechanic') return role === 'mechanic' ? '/m' : '/m/apply';
+  if (role === 'admin') return '/app';
+  return homeForHint(role);
+}

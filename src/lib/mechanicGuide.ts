@@ -208,6 +208,76 @@ export function inferCategory(text: string): GuideCategory {
   return CATEGORY_TERMS.find(({ terms }) => terms.some((term) => normalized.includes(term)))?.category ?? 'general';
 }
 
+/** Normalize customer description for phrase-aware matching. Preserves apostrophes. */
+export function normalizeText(text: string | null | undefined): string {
+  if (text == null) return '';
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Build a boundary-aware regex for a term. Apostrophe terms use includes() since \b breaks on '. */
+export function matchesTerm(normalized: string, term: string): boolean {
+  const t = term.toLowerCase();
+  if (t.includes("'")) {
+    return normalized.includes(t);
+  }
+  const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  return new RegExp(`\\b${escaped}\\b`, 'i').test(normalized);
+}
+
+export interface ClassificationResult {
+  suggestedCategory: GuideCategory;
+  matchStatus: 'matched' | 'uncertain';
+  safety: SafetyTriage;
+  originalText: string;
+}
+
+/** Classify a breakdown description into a category with safety triage. Rule-based only — no ML. */
+export function classifyProblem(text: string): ClassificationResult {
+  const originalText = text ?? '';
+  const normalized = normalizeText(originalText);
+
+  const CATEGORY_PRIORITY: GuideCategory[] = ['tow', 'engine', 'battery', 'flat-tyre', 'other', 'general'];
+
+  const counts = new Map<GuideCategory, number>();
+  for (const { category, terms } of CATEGORY_TERMS) {
+    counts.set(category, terms.filter((term) => matchesTerm(normalized, term)).length);
+  }
+
+  let bestCategory: GuideCategory = 'general';
+  let bestCount = 0;
+  for (const category of CATEGORY_PRIORITY) {
+    const count = counts.get(category) ?? 0;
+    if (count > bestCount) {
+      bestCount = count;
+      bestCategory = category;
+    }
+  }
+
+  // Tie-break: among categories with equal max count, priority order decides.
+  // Iterating CATEGORY_PRIORITY ascending means higher-priority categories
+  // are checked first and replace equal counts (strict > keeps first max,
+  // but we iterate high-to-low priority so high-priority wins ties).
+  if (bestCount === 0) {
+    return {
+      suggestedCategory: 'general',
+      matchStatus: 'uncertain',
+      safety: triageSafety(originalText),
+      originalText,
+    };
+  }
+
+  return {
+    suggestedCategory: bestCategory,
+    matchStatus: 'matched',
+    safety: triageSafety(originalText),
+    originalText,
+  };
+}
+
 export function triageSafety(text: string): SafetyTriage {
   if (EMERGENCY_PATTERNS.some((pattern) => pattern.test(text))) {
     return {

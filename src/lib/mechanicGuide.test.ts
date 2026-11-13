@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerDemoBotScenario, buildFallbackReply, getDemoBotMenu, parseUntrustedGuideResponse, shouldStartSubmission, startDemoBotScenario, triageSafety, validateGuideDraft } from './mechanicGuide';
+import { answerDemoBotScenario, buildFallbackReply, classifyProblem, getDemoBotMenu, normalizeText, parseUntrustedGuideResponse, shouldStartSubmission, startDemoBotScenario, triageSafety, validateGuideDraft } from './mechanicGuide';
 import type { Vehicle } from './customer';
 
 const vehicle: Vehicle = { id: 'v1', ownerId: 'u1', make: 'Toyota', model: 'Etios', year: 2018, plate: 'KA01AA1234', type: 'car' };
@@ -90,5 +90,63 @@ describe('mechanic guide', () => {
     expect(answerDemoBotScenario('fuel', 'yes').safety.level).toBe('emergency');
     expect(answerDemoBotScenario('unknown', 'yes').safety.level).toBe('emergency');
     expect(answerDemoBotScenario('engine-overheating', 'yes').safety.level).toBe('caution');
+  });
+
+  describe('normalizeText', () => {
+    it('lowercases and collapses whitespace', () => {
+      expect(normalizeText('  Hello   World  ')).toBe('hello world');
+    });
+    it('removes punctuation except apostrophes', () => {
+      expect(normalizeText('Battery, DEAD!')).toBe('battery dead');
+    });
+    it('preserves apostrophes', () => {
+      expect(normalizeText("won't start")).toBe("won't start");
+    });
+    it('handles null and empty input', () => {
+      expect(normalizeText(null)).toBe('');
+      expect(normalizeText('')).toBe('');
+    });
+  });
+
+  describe('phrase matching', () => {
+    it('matches multi-word phrases', () => {
+      expect(classifyProblem('flat tyre on rear wheel').suggestedCategory).toBe('flat-tyre');
+      expect(classifyProblem('dead battery').suggestedCategory).toBe('battery');
+      expect(classifyProblem("won't start").suggestedCategory).toBe('battery');
+      expect(classifyProblem('no crank').suggestedCategory).toBe('battery');
+    });
+    it('prevents substring false positives', () => {
+      expect(classifyProblem('restart the car').matchStatus).toBe('uncertain');
+      expect(classifyProblem('restart the car').suggestedCategory).toBe('general');
+    });
+    it('matches single words with boundaries', () => {
+      expect(classifyProblem('clicking sound').suggestedCategory).toBe('battery');
+    });
+    it('breaks ties by defined priority', () => {
+      // battery and engine each match one term; engine wins tie-break
+      const result = classifyProblem('battery dead and engine overheating');
+      expect(result.suggestedCategory).toBe('engine');
+      expect(result.matchStatus).toBe('matched');
+    });
+    it('returns uncertain for unknown descriptions', () => {
+      const result = classifyProblem('something strange is happening');
+      expect(result.suggestedCategory).toBe('general');
+      expect(result.matchStatus).toBe('uncertain');
+    });
+  });
+
+  describe('safety independence', () => {
+    it('smoke from engine matches engine category with caution safety', () => {
+      const result = classifyProblem('smoke from engine');
+      expect(result.suggestedCategory).toBe('engine');
+      expect(result.matchStatus).toBe('matched');
+      expect(result.safety.level).toBe('caution');
+    });
+    it('strong fuel smell triggers emergency even with engine category match', () => {
+      const result = classifyProblem('strong fuel smell, smoke from engine');
+      expect(result.suggestedCategory).toBe('engine');
+      expect(result.matchStatus).toBe('matched');
+      expect(result.safety.level).toBe('emergency');
+    });
   });
 });

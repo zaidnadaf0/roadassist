@@ -26,7 +26,7 @@ export function AuthLayout({ title, description, routePath, children }: LayoutPr
       <div className="mx-auto grid min-h-screen max-w-6xl gap-8 px-4 py-10 lg:grid-cols-2">
         <div className="flex flex-col justify-center">
           <Link to="/" className="mb-8 inline-flex w-fit items-center gap-2 text-steel-300 hover:text-cream">
-            <span className="clay-control grid h-10 w-10 place-items-center rounded-2xl border border-safety-300/20 bg-gradient-to-br from-safety-400 to-safety-600 text-white">
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-safety-400/30 bg-gradient-to-br from-safety-500 to-safety-700 text-white">
               <Icon name="truck" size={20} />
             </span>
             <span className="text-lg font-extrabold">RoadAssist</span>
@@ -39,8 +39,10 @@ export function AuthLayout({ title, description, routePath, children }: LayoutPr
                 key={portal.key}
                 to={portal.login}
                 className={cn(
-                  'clay-control rounded-2xl border px-3 py-3 transition-colors',
-                  activePortal === portal.key ? 'border-safety-500/60 bg-safety-500/10' : 'border-line-soft bg-graphite-card hover:border-line-strong',
+                  'rounded-xl border px-3 py-3 transition-colors',
+                  activePortal === portal.key
+                    ? 'border-safety-500/60 bg-safety-500/10 text-cream'
+                    : 'border-line-soft bg-graphite-card hover:border-line-strong hover:bg-graphite-soft/50',
                 )}
               >
                 <span className="block text-sm font-semibold text-cream">{portal.label}</span>
@@ -50,7 +52,7 @@ export function AuthLayout({ title, description, routePath, children }: LayoutPr
           </div>
           <div className="mt-6 w-full max-w-md">{children as ReactNode}</div>
         </div>
-        <aside className="clay-surface hidden flex-col justify-center rounded-3xl border border-line-soft bg-graphite-card p-8 lg:flex">
+        <aside className="hidden flex-col justify-center rounded-2xl border border-line-soft bg-graphite-card p-8 shadow-card lg:flex">
           <p className="text-xl font-medium leading-relaxed text-cream">
             “Twelve minutes from the moment I pressed the button to the moment the truck pulled up
             behind me.”

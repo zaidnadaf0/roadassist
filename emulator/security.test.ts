@@ -18,7 +18,7 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ID = 'roadassist-tsecurity';
@@ -29,6 +29,7 @@ let testEnv: RulesTestEnvironment;
 const ALICE = 'alice-customer';
 const BOB = 'bob-customer';
 const MEG = 'meg-mechanic';
+const OTHER = 'other-approved-mechanic';
 const UNA = 'una-mechanic-unapproved';
 const ADMIN = 'ada-admin';
 
@@ -39,6 +40,7 @@ async function seed() {
       [ALICE, 'customer'],
       [BOB, 'customer'],
       [MEG, 'mechanic'],
+      [OTHER, 'mechanic'],
       [UNA, 'mechanic'],
       [ADMIN, 'admin'],
     ] as const) {
@@ -94,6 +96,12 @@ async function seed() {
       baseLng: 77.5946,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+    });
+    await setDoc(doc(db, 'mechanics', OTHER), {
+      uid: OTHER, name: 'Other Motors', approved: true, verificationStatus: 'approved',
+      specialties: ['tow'], vehicleTypes: ['car'], experienceYears: 3, serviceRadiusKm: 25,
+      isAvailable: true, garageName: 'Other', garageAddress: 'PRIVATE 3 Exact Rd',
+      baseLat: 12.9716, baseLng: 77.5946, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     });
     await setDoc(doc(db, 'requests', 'req-open-1'), {
       id: 'req-open-1',
@@ -237,6 +245,18 @@ describe('customer ownership + escalation', () => {
 });
 
 describe('mechanic approval boundary', () => {
+  it('only an offered approved mechanic, the customer, or a claim-admin reads an open request', async () => {
+    await assertSucceeds(getDoc(doc(ctx(MEG).firestore(), 'requests', 'req-open-1')));
+    await assertFails(getDoc(doc(ctx(OTHER).firestore(), 'requests', 'req-open-1')));
+    await assertSucceeds(getDoc(doc(ctx(ALICE).firestore(), 'requests', 'req-open-1')));
+    await assertSucceeds(getDoc(doc(ctx(ADMIN, { admin: true }).firestore(), 'requests', 'req-open-1')));
+  });
+
+  it('does not allow a broad requested-queue query that cannot prove offer access', async () => {
+    const db = ctx(MEG).firestore();
+    await assertFails(getDocs(query(collection(db, 'requests'), where('status', '==', 'requested'))));
+  });
+
   it('unapproved mechanic cannot accept the open offer', async () => {
     const db = ctx(UNA).firestore();
     await assertFails(

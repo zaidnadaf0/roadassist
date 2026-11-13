@@ -161,31 +161,53 @@ export async function createOfferBatch(
   const ranked = rankEligible(req, mechanics, active, Date.now()).slice(0, maxBatch);
   if (ranked.length === 0) return { offers: 0, stopped: 'no-eligible' };
 
-  const now = new Date();
   const expiresAt = Timestamp.fromMillis(Date.now() + OFFER_WINDOW_MS);
-  const batch = db.batch();
-  for (const c of ranked) {
-    const offerRef = ref.collection('offers').doc(c.mechanic.id);
-    const offer: OfferDoc = {
-      requestId,
-      customerId: req.customerId,
-      mechanicId: c.mechanic.id,
-      mechanicName: c.mechanic.name,
-      createdAt: now,
-      expiresAt,
-      status: 'pending',
-      round,
-    };
-    batch.set(offerRef, offer);
-  }
-  batch.update(ref, {
-    offerExpiresAt: expiresAt,
-    rematchRound: round,
-    updatedAt: FieldValue.serverTimestamp(),
+  const now = new Date();
+  const result = await db.runTransaction(async (tx) => {
+    const currentSnap = await tx.get(ref);
+    if (!currentSnap.exists) return { offers: 0, stopped: 'missing' };
+    const current = currentSnap.data() as ServiceRequest & { rematchRound?: number };
+    if (current.status !== 'requested' || current.mechanicId) return { offers: 0, stopped: 'not-open' };
+    if ((current.rematchRound ?? 0) !== round) return { offers: 0, stopped: 'round-changed' };
+
+    const refs = ranked.map((c) => ref.collection('offers').doc(c.mechanic.id));
+    const existing = await Promise.all(refs.map((offerRef) => tx.get(offerRef)));
+    const toCreate = ranked.filter((_, index) => {
+      const docSnap = existing[index];
+      return !docSnap.exists || (docSnap.data() as OfferDoc).round !== round;
+    });
+    if (toCreate.length === 0) return { offers: 0, stopped: 'already-created' };
+
+    // Revalidate approval/availability inside the transaction: the mechanics
+    // query used for ranking ran outside the tx, so a concurrent admin edit
+    // could have flipped approved/isAvailable since. Close that window here
+    // (all reads precede any write; same guard acceptOfferTx uses).
+    const candidateSnaps = await Promise.all(
+      toCreate.map((c) => tx.get(db.collection('mechanics').doc(c.mechanic.id))),
+    );
+    const valid = toCreate.filter((c, i) => {
+      const mech = candidateSnaps[i].exists ? (candidateSnaps[i].data() as MechanicProfile) : null;
+      return !!mech && mech.approved && mech.isAvailable;
+    });
+    if (valid.length === 0) return { offers: 0, stopped: 'no-eligible' };
+
+    for (const c of valid) {
+      tx.set(ref.collection('offers').doc(c.mechanic.id), {
+        requestId,
+        customerId: current.customerId,
+        mechanicId: c.mechanic.id,
+        mechanicName: c.mechanic.name,
+        createdAt: now,
+        expiresAt,
+        status: 'pending',
+        round,
+      } satisfies OfferDoc);
+    }
+    tx.update(ref, { offerExpiresAt: expiresAt, updatedAt: FieldValue.serverTimestamp() });
+    return { offers: valid.length, stopped: null };
   });
-  await batch.commit();
-  console.log(`[dispatch] ${requestId}: round ${round}, ${ranked.length} offers`);
-  return { offers: ranked.length, stopped: null };
+  if (result.offers > 0) console.log(`[dispatch] ${requestId}: round ${round}, ${result.offers} offers`);
+  return result;
 }
 
 export type AcceptOutcome = 'accepted' | 'expired' | 'alreadyTaken' | 'ineligible' | 'no-offer';
@@ -249,7 +271,7 @@ export async function acceptOfferTx(
   });
 }
 
-export type DeclineOutcome = 'declined' | 'alreadyTaken' | 'error';
+export type DeclineOutcome = 'declined' | 'alreadyTaken' | 'expired' | 'ineligible' | 'error';
 
 /** Decline my offer (marks offer + appends request declinedBy atomically). */
 export async function declineOfferTx(db: Firestore, requestId: string, mechanicId: string): Promise<DeclineOutcome> {
@@ -259,11 +281,25 @@ export async function declineOfferTx(db: Firestore, requestId: string, mechanicI
       const reqSnap = await tx.get(reqRef);
       if (!reqSnap.exists) return 'alreadyTaken' as const;
       const req = reqSnap.data() as ServiceRequest;
-      if (req.status !== 'requested') return 'alreadyTaken' as const;
-      const list = Array.isArray(req.declinedBy) ? req.declinedBy : [];
+      if (req.status !== 'requested' || req.mechanicId) return 'alreadyTaken' as const;
+
       const offerRef = reqRef.collection('offers').doc(mechanicId);
       const offerSnap = await tx.get(offerRef);
-      if (!offerSnap.exists || (offerSnap.data() as OfferDoc).status !== 'pending') return 'alreadyTaken' as const;
+      if (!offerSnap.exists) return 'alreadyTaken' as const;
+      const offer = offerSnap.data() as OfferDoc;
+      if (offer.status !== 'pending') return 'alreadyTaken' as const;
+
+      // Server-side offer expiry: declining an expired offer is meaningless —
+      // it must be aged out by sweep/rematch, not excluded via declinedBy.
+      const expMs = offer.expiresAt instanceof Timestamp ? offer.expiresAt.toMillis() : 0;
+      if (expMs <= Date.now()) return 'expired' as const;
+
+      // Mechanic approval must still hold (mirrors acceptOfferTx's guard).
+      const mechSnap = await tx.get(db.collection('mechanics').doc(mechanicId));
+      const mech = (mechSnap.exists ? mechSnap.data() : null) as MechanicProfile | null;
+      if (!mech || !mech.approved) return 'ineligible' as const;
+
+      const list = Array.isArray(req.declinedBy) ? req.declinedBy : [];
       tx.update(offerRef, { status: 'declined', updatedAt: FieldValue.serverTimestamp() });
       if (!list.includes(mechanicId)) {
         tx.update(reqRef, { declinedBy: [...list, mechanicId], updatedAt: FieldValue.serverTimestamp() });
@@ -285,67 +321,120 @@ export async function rematchRequest(db: Firestore, requestId: string): Promise<
   const reqRef = db.collection('requests').doc(requestId);
   const snap = await reqRef.get();
   if (!snap.exists) return { offers: 0, stopped: 'missing' };
-  const req = snap.data() as ServiceRequest;
+  const req = snap.data() as ServiceRequest & { rematchRound?: number };
   if (req.status !== 'requested' || req.mechanicId) return { offers: 0, stopped: 'not-open' };
+  const currentRound = req.rematchRound ?? 0;
+  if (currentRound >= MAX_REMATCH_ROUNDS) return { offers: 0, stopped: 'rounds-exhausted' };
 
-  const now = Date.now();
-  const pending = await reqRef.collection('offers').where('status', '==', 'pending').get();
-  const batch = db.batch();
-  let expired = 0;
-  for (const d of pending.docs) {
-    const o = d.data() as OfferDoc;
-    const expMs = o.expiresAt instanceof Timestamp ? o.expiresAt.toMillis() : 0;
-    if (expMs <= now) {
-      batch.update(d.ref, { status: 'expired', updatedAt: FieldValue.serverTimestamp() });
-      expired++;
+  const [mechanics, active] = await Promise.all([loadCandidateMechanics(db), loadActiveCounts(db)]);
+  const ranked = rankEligible(req, mechanics, active, Date.now()).slice(0, OFFER_BATCH_SIZE);
+  const nowMs = Date.now();
+  const now = new Date(nowMs);
+  const expiresAt = Timestamp.fromMillis(nowMs + OFFER_WINDOW_MS);
+  const pendingQuery = reqRef.collection('offers').where('status', '==', 'pending');
+
+  return db.runTransaction(async (tx) => {
+    const currentSnap = await tx.get(reqRef);
+    if (!currentSnap.exists) return { offers: 0, stopped: 'missing' };
+    const current = currentSnap.data() as ServiceRequest & { rematchRound?: number };
+    if (current.status !== 'requested' || current.mechanicId) return { offers: 0, stopped: 'not-open' };
+    // The round read before candidate selection is the operation's idempotency
+    // token. Concurrent sweep/decline attempts can advance it only once.
+    if ((current.rematchRound ?? 0) !== currentRound) return { offers: 0, stopped: 'round-changed' };
+
+    const pending = await tx.get(pendingQuery);
+    const live = pending.docs.some((d) => {
+      const offer = d.data() as OfferDoc;
+      return offer.expiresAt instanceof Timestamp && offer.expiresAt.toMillis() > nowMs;
+    });
+    if (live) return { offers: 0, stopped: 'offers-pending' };
+
+    const nextRound = currentRound + 1;
+
+    // Revalidate approval/availability inside the transaction (ranking read the
+    // mechanics snapshot outside the tx). All reads precede any write.
+    const candidateSnaps = await Promise.all(
+      ranked.map((c) => tx.get(db.collection('mechanics').doc(c.mechanic.id))),
+    );
+    const eligibleRanked = ranked.filter((c, i) => {
+      const mech = candidateSnaps[i].exists ? (candidateSnaps[i].data() as MechanicProfile) : null;
+      return !!mech && mech.approved && mech.isAvailable;
+    });
+
+    const offerRefs = eligibleRanked.map((c) => reqRef.collection('offers').doc(c.mechanic.id));
+    const targetOffers = await Promise.all(offerRefs.map((offerRef) => tx.get(offerRef)));
+    const candidateIds = new Set(eligibleRanked.map((c) => c.mechanic.id));
+    for (const d of pending.docs) {
+      if (d.data().expiresAt instanceof Timestamp && d.data().expiresAt.toMillis() <= nowMs && !candidateIds.has(d.id)) {
+        tx.update(d.ref, { status: 'expired', updatedAt: FieldValue.serverTimestamp() });
+      }
     }
-  }
-  if (expired > 0) await batch.commit();
 
-  const round = ((req as ServiceRequest & { rematchRound?: number }).rematchRound ?? 0) + 1;
-  await reqRef.update({ rematchRound: round, updatedAt: FieldValue.serverTimestamp() });
-  if (round > MAX_REMATCH_ROUNDS) return { offers: 0, stopped: 'rounds-exhausted' };
-  return createOfferBatch(db, requestId);
+    let created = 0;
+    for (let i = 0; i < eligibleRanked.length; i++) {
+      const candidate = eligibleRanked[i];
+      const priorOffer = targetOffers[i];
+      if (priorOffer.exists && (priorOffer.data() as OfferDoc).round === nextRound) continue;
+      tx.set(offerRefs[i], {
+        requestId,
+        customerId: current.customerId,
+        mechanicId: candidate.mechanic.id,
+        mechanicName: candidate.mechanic.name,
+        createdAt: now,
+        expiresAt,
+        status: 'pending',
+        round: nextRound,
+      } satisfies OfferDoc);
+      created++;
+    }
+    tx.update(reqRef, {
+      rematchRound: nextRound,
+      ...(eligibleRanked.length > 0 ? { offerExpiresAt: expiresAt } : {}),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { offers: created, stopped: eligibleRanked.length > 0 ? null : 'no-eligible' };
+  });
 }
 
 /** Expire a single stale offer (used by the sweep for targeted cleanup). */
 export async function expireStaleOffers(db: Firestore, requestId: string, nowMs: number): Promise<number> {
   const reqRef = db.collection('requests').doc(requestId);
-  const pending = await reqRef.collection('offers').where('status', '==', 'pending').get();
-  const batch = db.batch();
-  let n = 0;
-  for (const d of pending.docs) {
-    const o = d.data() as OfferDoc;
-    const expMs = o.expiresAt instanceof Timestamp ? o.expiresAt.toMillis() : 0;
-    if (expMs <= nowMs) {
-      batch.update(d.ref, { status: 'expired', updatedAt: FieldValue.serverTimestamp() });
-      n++;
+  return db.runTransaction(async (tx) => {
+    const reqSnap = await tx.get(reqRef);
+    if (!reqSnap.exists) return 0;
+    const pending = await tx.get(reqRef.collection('offers').where('status', '==', 'pending'));
+    let n = 0;
+    for (const d of pending.docs) {
+      const offer = d.data() as OfferDoc;
+      const expMs = offer.expiresAt instanceof Timestamp ? offer.expiresAt.toMillis() : 0;
+      if (expMs <= nowMs) {
+        tx.update(d.ref, { status: 'expired', updatedAt: FieldValue.serverTimestamp() });
+        n++;
+      }
     }
-  }
-  if (n > 0) await batch.commit();
-  return n;
+    return n;
+  });
 }
 
 /**
- * Close every still-pending offer on an accepted request. The normal accept
+ * Close every still-pending offer after acceptance or cancellation. The normal accept
  * path supersedes siblings inside acceptOfferTx, so this is a no-op there —
  * it exists for out-of-band transitions (e.g. claim-admin writes) that would
  * otherwise leave phantom pending offers live in mechanic queues.
  */
 export async function supersedePendingOffers(db: Firestore, requestId: string): Promise<number> {
-  const pending = await db
-    .collection('requests')
-    .doc(requestId)
-    .collection('offers')
-    .where('status', '==', 'pending')
-    .get();
-  if (pending.empty) return 0;
-  const batch = db.batch();
-  for (const d of pending.docs) {
-    batch.update(d.ref, { status: 'superseded', updatedAt: FieldValue.serverTimestamp() });
-  }
-  await batch.commit();
-  return pending.size;
+  const reqRef = db.collection('requests').doc(requestId);
+  return db.runTransaction(async (tx) => {
+    const reqSnap = await tx.get(reqRef);
+    if (!reqSnap.exists) return 0;
+    const status = (reqSnap.data() as ServiceRequest).status;
+    if (status !== 'accepted' && status !== 'cancelled') return 0;
+    const pending = await tx.get(reqRef.collection('offers').where('status', '==', 'pending'));
+    for (const d of pending.docs) {
+      tx.update(d.ref, { status: 'superseded', updatedAt: FieldValue.serverTimestamp() });
+    }
+    return pending.size;
+  });
 }
 
 /**
@@ -362,6 +451,10 @@ export async function sweepRequest(
   nowMs: number,
 ): Promise<{ expired: number; rematched: boolean }> {
   const ref = db.collection('requests').doc(requestId);
+  const initial = await ref.get();
+  if (!initial.exists) return { expired: 0, rematched: false };
+  const initialRequest = initial.data() as ServiceRequest;
+  if (initialRequest.status !== 'requested' || initialRequest.mechanicId) return { expired: 0, rematched: false };
   const expired = await expireStaleOffers(db, requestId, nowMs);
   if (expired > 0) {
     await rematchRequest(db, requestId);

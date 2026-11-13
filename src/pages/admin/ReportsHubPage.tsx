@@ -90,12 +90,20 @@ export function ReportsHubPage() {
             <Card>
               <p className="font-semibold text-cream">Requests export</p>
               <p className="mt-1 text-sm text-steel-300">{requests.length} requests in the current snapshot. IDs, statuses, categories, assignment, amounts, ratings — no locations.</p>
-              <div className="mt-3"><Button onClick={exportRequests}>Download requests CSV</Button></div>
+              {requests.length === 0 ? (
+                <p className="mt-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">Nothing to export — the snapshot is empty. A header-only file would be misleading, so the download is disabled.</p>
+              ) : (
+                <div className="mt-3"><Button onClick={exportRequests}>Download requests CSV</Button></div>
+              )}
             </Card>
             <Card>
               <p className="font-semibold text-cream">Mechanics export</p>
               <p className="mt-1 text-sm text-steel-300">{mechanics.length} mechanics in the current snapshot. Approval state, availability, rating aggregates — no addresses, coordinates, or contact.</p>
-              <div className="mt-3"><Button onClick={exportMechanics}>Download mechanics CSV</Button></div>
+              {mechanics.length === 0 ? (
+                <p className="mt-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">Nothing to export — the snapshot is empty. A header-only file would be misleading, so the download is disabled.</p>
+              ) : (
+                <div className="mt-3"><Button onClick={exportMechanics}>Download mechanics CSV</Button></div>
+              )}
             </Card>
           </div>
         )}

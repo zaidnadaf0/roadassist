@@ -147,7 +147,7 @@ service cloud.firestore {
       allow read: if isSignedIn() && (
         isClaimAdmin() ||
         resource.data.customerId == request.auth.uid ||
-        (resource.data.status == 'requested' && isMechanicApproved()) ||
+        (resource.data.status == 'requested' && isMechanicApproved() && hasValidOffer(id)) ||
         (resource.data.mechanicId == request.auth.uid)
       );
       // Customer creates its own request: exact allowlist, owned vehicle,
@@ -245,6 +245,11 @@ service cloud.firestore {
                 && request.resource.data.mechanicLocationUpdatedAt <= 4102444800000))
         && ((!(request.resource.data.diff(resource.data).affectedKeys().hasAny(['amountCents', 'durationMin'])))
             || request.resource.data.status == 'completed')
+        // Completion requires a customer-approved estimate. advanceJob()
+        // enforces this client-side; the rule makes it a trust boundary so a
+        // direct SDK write cannot bill an unapproved repair.
+        && (request.resource.data.status != 'completed'
+            || ('estimateStatus' in resource.data && resource.data.estimateStatus == 'approved'))
         && (!('amountCents' in request.resource.data)
             || (request.resource.data.amountCents is number
                 && request.resource.data.amountCents >= 0
@@ -253,6 +258,93 @@ service cloud.firestore {
             || (request.resource.data.durationMin is number
                 && request.resource.data.durationMin >= 0
                 && request.resource.data.durationMin <= 1440));
+
+      // Assigned mechanic submits a repair estimate before completion.
+      // Estimate fields are write-once per status transition; once approved,
+      // the mechanic may no longer modify estimate values. A REJECTED estimate
+      // may be revised (it returns to 'pending'), which is what the mechanic
+      // UI and submitEstimate() already assume.
+      allow update: if resource.data.mechanicId == request.auth.uid
+        && isMechanic()
+        && !(resource.data.status in ['completed', 'cancelled'])
+        && request.resource.data.mechanicId == resource.data.mechanicId
+        && request.resource.data.mechanicName == resource.data.mechanicName
+        && ((resource.data.status == resource.data.status
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'estimatedAmountCents', 'estimatedDurationMin', 'estimateDiagnosis',
+              'estimateStatus', 'updatedAt'])) )
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['estimatedAmountCents', 'estimatedDurationMin', 'estimateDiagnosis',
+                      'estimateStatus', 'updatedAt'])
+        && (!('estimatedAmountCents' in request.resource.data)
+            || (request.resource.data.estimatedAmountCents is number
+                && request.resource.data.estimatedAmountCents >= 0
+                && request.resource.data.estimatedAmountCents <= 1000000))
+        && (!('estimatedDurationMin' in request.resource.data)
+            || (request.resource.data.estimatedDurationMin is number
+                && request.resource.data.estimatedDurationMin >= 0
+                && request.resource.data.estimatedDurationMin <= 1440))
+        && (!('estimateDiagnosis' in request.resource.data)
+            || (request.resource.data.estimateDiagnosis == null
+                || (request.resource.data.estimateDiagnosis is string
+                    && request.resource.data.estimateDiagnosis.size() <= 2000)))
+        && (!('estimateStatus' in request.resource.data)
+            || (request.resource.data.estimateStatus in ['pending', 'approved', 'rejected']
+                // Cannot move away from approved (only customer can approve/reject).
+                // `in` (never a bare field read): an absent field is an
+                // evaluation ERROR in rules, which denied the very first
+                // estimate submission on a request that had none.
+                && (!('estimateStatus' in resource.data)
+                    || resource.data.estimateStatus in ['pending', 'rejected'])
+                // Mechanic can only set pending/rejected; customer sets approved.
+                && request.resource.data.estimateStatus != 'approved'))
+        && (!('estimateApprovedAt' in request.resource.data)
+            || request.resource.data.estimateApprovedAt == null
+            || (request.resource.data.estimateApprovedAt is number
+                && request.resource.data.estimateApprovedAt >= 0
+                && request.resource.data.estimateApprovedAt <= 4102444800000));
+
+      // Customer approves or rejects an estimate. Only the request-owning
+      // customer may set estimateStatus to approved/rejected with a timestamp,
+      // and only while an estimate is actually awaiting a decision.
+      allow update: if resource.data.customerId == request.auth.uid
+        && isCustomer()
+        && resource.data.mechanicId != null
+        // `in`-guarded: a request whose estimate fields are absent must fall
+        // through to the other update branches without a rule evaluation error.
+        && ('estimateStatus' in resource.data && resource.data.estimateStatus == 'pending')
+        && !(resource.data.status in ['completed', 'cancelled'])
+        && ((resource.data.status == resource.data.status
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'estimateStatus', 'estimateApprovedAt', 'updatedAt'])) )
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['estimateStatus', 'estimateApprovedAt', 'updatedAt'])
+        && request.resource.data.estimateStatus in ['approved', 'rejected']
+        && (!('estimateApprovedAt' in request.resource.data)
+            || (request.resource.data.estimateApprovedAt is number
+                && request.resource.data.estimateApprovedAt >= 0
+                && request.resource.data.estimateApprovedAt <= 4102444800000));
+
+      // Offline payment recording by an authorized actor. Payment is recorded,
+      // not independently verified. Requires a completed job.
+      allow update: if (resource.data.customerId == request.auth.uid || resource.data.mechanicId == request.auth.uid)
+        && (isCustomer() || isMechanic())
+        && resource.data.status == 'completed'
+        && ((resource.data.status == resource.data.status
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'paymentMethod', 'paymentStatus', 'paidAt', 'paidBy', 'updatedAt'])) )
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['paymentMethod', 'paymentStatus', 'paidAt', 'paidBy', 'updatedAt'])
+        && (!('paymentMethod' in request.resource.data)
+            || request.resource.data.paymentMethod in ['cash', 'upi'])
+        && (!('paymentStatus' in request.resource.data)
+            || request.resource.data.paymentStatus == 'paid')
+        && (!('paidAt' in request.resource.data)
+            || request.resource.data.paidAt is number
+            && request.resource.data.paidAt >= 0
+            && request.resource.data.paidAt <= 4102444800000)
+        && (!('paidBy' in request.resource.data)
+            || request.resource.data.paidBy is string);
 
       // Approved mechanic declines: append-only UID, cap 50.
       allow update: if resource.data.status == 'requested'

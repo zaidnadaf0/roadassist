@@ -17,11 +17,15 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   Timestamp,
+  collectionGroup,
   doc,
   getDoc,
+  getDocs,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -167,7 +171,7 @@ describe('mechanic job lifecycle (M5 vs M3 rules)', () => {
     expect(after.data()?.mechanicId).toBeNull();
   });
 
-  it('advances along the canonical chain and completes with billing', async () => {
+  it('advances along the canonical chain and completes only with an approved estimate', async () => {
     const db = mechDb();
     const ref = doc(db, 'requests', 'm5-req-complete');
     await forceAccepted('m5-req-complete');
@@ -176,6 +180,21 @@ describe('mechanic job lifecycle (M5 vs M3 rules)', () => {
     }
     // Money on non-completed status → denied.
     await assertFails(updateDoc(ref, { status: 'service', amountCents: 100, updatedAt: serverTimestamp() }));
+    // M18: completion requires a customer-approved repair estimate. The client
+    // (advanceJob) refuses first; the rules refuse it at the trust boundary too.
+    await assertFails(
+      updateDoc(ref, {
+        status: 'completed', mechanicLat: null, mechanicLng: null,
+        amountCents: 49900, durationMin: 25, updatedAt: serverTimestamp(),
+      }),
+    );
+    // The approval itself is the customer's write (covered in estimates.test.ts);
+    // seed the decided state so this test keeps its single-mechanic scope.
+    await testEnv.withSecurityRulesDisabled(async (adminCtx) => {
+      await updateDoc(doc(adminCtx.firestore(), 'requests', 'm5-req-complete'), {
+        estimateStatus: 'approved', estimateApprovedAt: Date.now(), estimatedAmountCents: 49900,
+      });
+    });
     await assertSucceeds(
       updateDoc(ref, {
         status: 'completed', mechanicLat: null, mechanicLng: null,
@@ -219,6 +238,24 @@ describe('mechanic job lifecycle (M5 vs M3 rules)', () => {
     const db = mechDb();
     await assertFails(updateDoc(doc(db, 'mechanics', MECH), { approved: false }));
     await assertFails(updateDoc(doc(db, 'mechanics', MECH), { verificationStatus: 'pending' }));
+  });
+
+  it('serves the live offer queue query (collectionGroup, index-backed, scope-proof)', async () => {
+    // The exact query shape of watchMyOffers (src/lib/dispatch.ts): a
+    // collection-group query with TWO equality filters. It requires the
+    // offers(mechanicId,status) composite index declared in
+    // firestore.indexes.json — the emulator enforces it, so this test
+    // fails without the index — and rules authorize it only because the
+    // mechanicId filter proves read scope.
+    const db = mechDb();
+    const mine = await assertSucceeds(
+      getDocs(query(collectionGroup(db, 'offers'), where('mechanicId', '==', MECH), where('status', '==', 'pending'))),
+    );
+    expect(mine.docs.length).toBeGreaterThanOrEqual(1);
+    // A mechanic cannot scope a query at another mechanic's id: the filter
+    // no longer proves the read belongs to them.
+    const foreign = query(collectionGroup(db, 'offers'), where('mechanicId', '==', 'someone-else'), where('status', '==', 'pending'));
+    await assertFails(getDocs(foreign));
   });
 
   it('reads own operational profile and private contact, nothing else’s', async () => {

@@ -9,7 +9,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs', 'functions/src/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs', 'functions/src/**/*.test.ts', 'e2e/**/*.vitest.ts'],
     testTimeout: 20_000,
   },
 });

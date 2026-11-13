@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/app/AuthProvider';
 import { EmptyState, LoadingState, PageHeader } from '@/components/ui';
 import { Button } from '@/components/ui';
@@ -22,8 +22,13 @@ export function resolveAdminGate(authStatus: string, isAdmin: boolean | null): A
 }
 
 export function RequireAdmin({ children }: { children: ReactNode }) {
-  const { status, isAdmin, refreshClaim } = useAuth();
+  const { status, isAdmin, refreshClaim, signOut } = useAuth();
+  const navigate = useNavigate();
   const gate = resolveAdminGate(status, isAdmin);
+
+  function handleSignOut() {
+    void signOut().catch(() => undefined).finally(() => navigate('/login', { replace: true }));
+  }
 
   if (gate === 'loading') {
     return (
@@ -53,6 +58,7 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
           <Link to="/" className="inline-flex h-11 items-center rounded-xl border border-line-soft px-5 text-sm font-medium hover:border-line-strong">
             Back to home
           </Link>
+          <Button variant="secondary" onClick={handleSignOut}>Sign out</Button>
         </div>
       </div>
     );

@@ -6,22 +6,31 @@ import {
   countUnread,
   markAllNotificationsRead,
   markNotificationRead,
+  notificationHref,
   watchNotifications,
   type AppNotification,
+  type NotificationPortal,
 } from '@/lib/customer';
-import { DEMO_NOTIFICATIONS } from '@/lib/fixtures';
+import { DEMO_ADMIN_NOTIFICATIONS, DEMO_NOTIFICATIONS } from '@/lib/fixtures';
+import type { RoutePageProps } from '@/routes';
 
-export function NotificationsPage() {
+/**
+ * Shared inbox for all three portals. `portal` selects the role-safe link
+ * destination for each notice (see notificationHref) — the customer tracking
+ * page is never opened from the mechanic or admin inbox.
+ */
+export function NotificationsPage({ portal = 'customer' }: { portal?: NotificationPortal } & Partial<RoutePageProps>) {
   const { demoMode, user } = useAuth();
   const uid = user?.uid ?? '';
   const [items, setItems] = useState<AppNotification[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!uid) return;
     if (demoMode) {
-      setItems(DEMO_NOTIFICATIONS);
+      setItems(portal === 'admin' ? DEMO_ADMIN_NOTIFICATIONS : DEMO_NOTIFICATIONS);
       setFailed(false);
       return;
     }
@@ -33,7 +42,7 @@ export function NotificationsPage() {
     return () => {
       if (unsub) unsub();
     };
-  }, [uid, demoMode]);
+  }, [uid, demoMode, portal]);
 
   const unread = items ? countUnread(items) : 0;
 
@@ -45,13 +54,16 @@ export function NotificationsPage() {
       setMarkingAll(false);
       return;
     }
-    const { marked } = await markAllNotificationsRead(
+    const { marked, failed } = await markAllNotificationsRead(
       uid,
       items.filter((n) => !n.read).map((n) => n.id),
     );
     setMarkingAll(false);
     if (marked > 0) {
       setItems((prev) => (prev ?? []).map((x) => ({ ...x, read: true })));
+    }
+    if (failed > 0) {
+      setActionError(`Could not mark ${failed} notification${failed > 1 ? 's' : ''} as read. Check your connection and try again.`);
     }
   }
 
@@ -61,6 +73,9 @@ export function NotificationsPage() {
         title="Notifications"
         description={unread > 0 ? `${unread} unread — dispatch updates and account notices, newest first.` : 'Dispatch updates and account notices, newest first.'}
       />
+      {actionError && (
+        <p role="alert" className="mb-3 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-cream">{actionError}</p>
+      )}
       {items === null && !failed ? (
         <LoadingState label="Loading notifications…" />
       ) : failed ? (
@@ -89,20 +104,39 @@ export function NotificationsPage() {
                     {!n.read && (
                       <button
                         type="button"
-                        onClick={() => demoMode
-                          ? setItems((prev) => (prev ?? []).map((x) => (x.id === n.id ? { ...x, read: true } : x)))
-                          : markNotificationRead(uid, n.id).then(() => setItems((prev) => (prev ?? []).map((x) => (x.id === n.id ? { ...x, read: true } : x))))}
+                        onClick={() => {
+                          setActionError(null);
+                          if (demoMode) {
+                            setItems((prev) => (prev ?? []).map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+                            return;
+                          }
+                          // Flip the row only when the server write succeeds —
+                          // an optimistic flip on a failed write diverges from
+                          // the authoritative snapshot.
+                          void markNotificationRead(uid, n.id).then((ok) => {
+                            if (ok) {
+                              setItems((prev) => (prev ?? []).map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+                            } else {
+                              setActionError('Could not mark this notification as read. Try again.');
+                            }
+                          });
+                        }}
                         className="shrink-0 rounded-lg border border-line-soft px-3 py-1.5 text-xs font-medium hover:border-line-strong"
                       >
                         Mark read
                       </button>
                     )}
                   </div>
-                  {n.requestId && (
-                    <p className="mt-2 text-sm">
-                      <Link to={`/track/${n.requestId}`} className="font-medium text-safety-400 hover:text-safety-300">Open request →</Link>
-                    </p>
-                  )}
+                  {(() => {
+                    const href = notificationHref(n, portal);
+                    return href ? (
+                      <p className="mt-2 text-sm">
+                        <Link to={href} className="font-medium text-safety-400 hover:text-safety-300">
+                          {portal === 'customer' ? 'Open request →' : 'Open →'}
+                        </Link>
+                      </p>
+                    ) : null;
+                  })()}
                 </Card>
               </li>
             ))}

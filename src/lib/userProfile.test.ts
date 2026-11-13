@@ -5,6 +5,7 @@ import {
   buildNewUserProfile,
   homeForHint,
   isProfileHint,
+  resolveAuthHome,
 } from '@/lib/userProfile';
 
 describe('signup profile contract (anti-escalation)', () => {
@@ -39,6 +40,19 @@ describe('signup profile contract (anti-escalation)', () => {
     expect(homeForHint('customer')).toBe('/app');
     expect(homeForHint('mechanic')).toBe('/m');
     expect(homeForHint('admin')).toBe('/admin');
+  });
+
+  it('routes mechanic portal access without granting a role', () => {
+    expect(resolveAuthHome('customer', false, 'mechanic', false)).toBe('/m/apply');
+    expect(resolveAuthHome('customer', false, 'mechanic', true)).toBe('/m');
+    expect(resolveAuthHome('mechanic', false, 'mechanic', false)).toBe('/m');
+    expect(resolveAuthHome('customer', false, 'customer', true)).toBe('/m');
+  });
+
+  it('routes admins only when the verified claim is true', () => {
+    expect(resolveAuthHome('admin', false, 'admin')).toBe('/app');
+    expect(resolveAuthHome('customer', true, 'mechanic')).toBe('/admin');
+    expect(resolveAuthHome('customer', false, 'customer')).toBe('/app');
   });
 
   it('profile collection name is stable for M3 rules', () => {

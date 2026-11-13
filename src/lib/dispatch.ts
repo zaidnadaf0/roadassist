@@ -76,8 +76,11 @@ export function watchMyOffers(
             .filter((o): o is OfferView => o !== null),
         ),
       (err) => {
-        cb([]);
-        onError?.(err as Error);
+        // With an error handler the caller owns the failure state — never
+        // masquerade a query/rules failure as an empty queue. Callers
+        // without a handler keep the legacy empty-array behavior.
+        if (onError) onError(err as Error);
+        else cb([]);
       },
     );
   } catch {
@@ -95,6 +98,7 @@ export function watchRequestOffers(
   requestId: string,
   customerId: string,
   cb: (offers: OfferView[]) => void,
+  onError?: (e: Error) => void,
 ): Unsubscribe | null {
   try {
     const d = requireDb();
@@ -110,7 +114,12 @@ export function watchRequestOffers(
             .map((s) => asOffer(requestId, s.id, s.data()))
             .filter((o): o is OfferView => o !== null),
         ),
-      () => cb([]),
+      (err) => {
+        // Caller with a handler owns the failure state; without one the
+        // legacy empty-array behavior is preserved.
+        if (onError) onError(err as Error);
+        else cb([]);
+      },
     );
   } catch {
     return null;
@@ -122,6 +131,7 @@ export function watchMyOfferHistory(
   mechanicId: string,
   cb: (offers: OfferView[]) => void,
   max = 50,
+  onError?: (e: Error) => void,
 ): Unsubscribe | null {
   try {
     const d = requireDb();
@@ -136,7 +146,10 @@ export function watchMyOfferHistory(
             })
             .filter((o): o is OfferView => o !== null),
         ),
-      () => cb([]),
+      (err) => {
+        if (onError) onError(err as Error);
+        else cb([]);
+      },
     );
   } catch {
     return null;

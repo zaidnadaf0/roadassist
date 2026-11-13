@@ -4,7 +4,15 @@ service firebase.storage {
   match /b/{bucket}/o {
     function isSignedIn() { return request.auth != null; }
     function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
-    function isClaimAdmin() { return isSignedIn() && request.auth.token.admin == true; }
+    // `in`-guard mirrors firestore.rules: reading an absent custom claim is
+    // an evaluation error rather than null, so without the guard every
+    // claim-less caller errors instead of cleanly denying.
+    function isClaimAdmin() {
+      return isSignedIn() && ('admin' in request.auth.token) && request.auth.token.admin == true;
+    }
+    // NOTE: contentType is client-asserted — Storage rules cannot re-verify
+    // image bytes. It is an upload gate, not a content guarantee; object
+    // inspection (or a resize trigger) is the follow-up hardening step.
     function isSafeImage() {
       return request.resource.size < 8 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');

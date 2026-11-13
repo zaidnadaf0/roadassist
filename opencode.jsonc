@@ -1,0 +1,33 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "local-ollama/qwen35-32k:latest",
+  "policies": [
+    { "action": "skill.use", "resource": "*", "effect": "deny" }
+  ],
+  "provider": {
+    "local-ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local Ollama",
+      "options": {
+        "baseURL": "http://127.0.0.1:11434/v1"
+      },
+      "models": {
+        "qwen35-32k:latest": {
+          "name": "Qwen3.5 4B (general coding)",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"], "temperature": true },
+          "limit": { "context": 32768, "output": 8192 }
+        },
+        "qwen25-32k:latest": {
+          "name": "Qwen2.5-Coder 3B (lightweight)",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"], "temperature": true },
+          "limit": { "context": 32768, "output": 4096 }
+        },
+        "qwen3d-native:latest": {
+          "name": "Qwen3.5 4B 3D Coder (Three.js)",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"], "temperature": true },
+          "limit": { "context": 32768, "output": 8192 }
+        }
+      }
+    }
+  }
+}

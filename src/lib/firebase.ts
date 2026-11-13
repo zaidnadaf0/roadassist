@@ -1,7 +1,7 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
-import { getFirestore, type Firestore } from 'firebase/firestore';
-import { getFunctions, type Functions } from 'firebase/functions';
+import { connectAuthEmulator, getAuth, type Auth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
+import { connectFunctionsEmulator, getFunctions, type Functions } from 'firebase/functions';
 
 /**
  * M2 Firebase initialization (modular SDK only — no compat SDK).
@@ -64,11 +64,23 @@ export function firebaseApp(): FirebaseApp | null {
   return _app;
 }
 
-/** Firebase Auth singleton. Null when unconfigured (M2 honesty gate). */
+/**
+ * Dev-only emulator seam: set VITE_USE_EMULATORS=true to wire Auth
+ * (127.0.0.1:9099), Firestore (127.0.0.1:8080) and Functions
+ * (127.0.0.1:5001) to the local Firebase Emulator Suite. Production
+ * behavior is unchanged — the flag is read once at init and never set in
+ * any deployed environment. Always-on-auth imports keep the module tree
+ * clean; the connections are made lazily inside the singletons.
+ */
+const USE_EMULATORS = import.meta.env.VITE_USE_EMULATORS === 'true';
+
 export function firebaseAuth(): Auth | null {
   const app = firebaseApp();
   if (!app) return null;
-  if (!_auth) _auth = getAuth(app);
+  if (!_auth) {
+    _auth = getAuth(app);
+    if (USE_EMULATORS) connectAuthEmulator(_auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  }
   return _auth;
 }
 
@@ -80,7 +92,10 @@ export function firebaseAuth(): Auth | null {
 export function firebaseDb(): Firestore | null {
   const app = firebaseApp();
   if (!app) return null;
-  if (!_db) _db = getFirestore(app);
+  if (!_db) {
+    _db = getFirestore(app);
+    if (USE_EMULATORS) connectFirestoreEmulator(_db, '127.0.0.1', 8080);
+  }
   return _db;
 }
 
@@ -93,6 +108,9 @@ export function firebaseDb(): Firestore | null {
 export function firebaseFunctions(): Functions | null {
   const app = firebaseApp();
   if (!app) return null;
-  if (!_functions) _functions = getFunctions(app);
+  if (!_functions) {
+    _functions = getFunctions(app);
+    if (USE_EMULATORS) connectFunctionsEmulator(_functions, '127.0.0.1', 5001);
+  }
   return _functions;
 }

@@ -47,6 +47,40 @@ export function deterministicOrder(items: RankInput[]): string[] {
     .map((c) => c.id);
 }
 
+/** Build factual recommendation highlights for a mechanic from client-visible data.
+ *
+ * These are plain facts (distance, service match, rating, reviews) — not model
+ * explainability. The ML service returns ordered IDs only; it does not surface
+ * feature importance. Use these for UI display only, never for dispatch.
+ */
+export interface MechanicExplanation {
+  distance?: string;
+  serviceMatch?: string;
+  rating?: string;
+  reviews?: string;
+  experience?: string;
+  available?: string;
+}
+
+/** Generate factual highlights for one mechanic. Pure — no side effects. */
+export function explainMechanic(item: RankInput): MechanicExplanation {
+  const out: MechanicExplanation = {};
+  const km = item.distanceKm;
+  if (km != null && Number.isFinite(km) && km >= 0) {
+    out.distance = km < 1 ? '<1 km away' : `${km.toFixed(1)} km away`;
+  }
+  if (item.serviceMatch) {
+    out.serviceMatch = 'supports your service category';
+  }
+  if (item.rating != null && Number.isFinite(item.rating) && item.rating > 0) {
+    out.rating = `★ ${item.rating.toFixed(1)}`;
+  }
+  if (item.reviewCount != null && Number.isFinite(item.reviewCount) && item.reviewCount > 0) {
+    out.reviews = `${Math.min(item.reviewCount, 50)} review${item.reviewCount !== 1 ? 's' : ''}`;
+  }
+  return out;
+}
+
 /** Feature payload subset available client-side (history aggregates stay server-side). */
 function toCandidate(c: RankInput) {
   return {

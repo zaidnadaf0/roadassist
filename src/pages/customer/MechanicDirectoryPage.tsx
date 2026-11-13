@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, Card, EmptyState, LoadingState, PageHeader } from '@/components/ui';
+import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
 import { watchPublicMechanics, type PublicMechanic } from '@/lib/customer';
-import { rankWithML } from '@/lib/mlRank';
+import { explainMechanic, rankWithML } from '@/lib/mlRank';
 import { FIXTURE_MECHANICS } from '@/lib/fixtures';
 import { useAuth } from '@/app/AuthProvider';
 
@@ -21,11 +21,15 @@ const FILTER_CATEGORY: Record<(typeof FILTERS)[number], string> = {
 export function MechanicDirectoryPage() {
   const { demoMode } = useAuth();
   const [roster, setRoster] = useState<PublicMechanic[] | null>(null);
+  const [feedError, setFeedError] = useState(false);
+  const [retry, setRetry] = useState(0);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('all');
   const [mlOrder, setMlOrder] = useState<string[] | null>(null);
+  const [mlOrderSource, setMlOrderSource] = useState<'ml' | 'fallback' | null>(null);
 
   useEffect(() => {
     if (demoMode) {
+      setFeedError(false);
       setRoster(FIXTURE_MECHANICS.map((m) => ({
         id: m.id,
         name: m.name,
@@ -42,11 +46,11 @@ export function MechanicDirectoryPage() {
       })));
       return;
     }
-    const unsub = watchPublicMechanics((items) => setRoster(items), () => setRoster([]), 100);
+    const unsub = watchPublicMechanics((items) => setRoster(items), () => setFeedError(true), 100);
     return () => {
       if (unsub) unsub();
     };
-  }, [demoMode]);
+  }, [demoMode, retry]);
 
   // M11 display-ordering seam: ML service first (1.2 s), deterministic
   // fallback guaranteed. Ordering only — never assignment or dispatch.
@@ -64,7 +68,10 @@ export function MechanicDirectoryPage() {
         vehicleType: 'car',
       })),
     ).then((out) => {
-      if (!cancelled) setMlOrder(out.orderedIds);
+      if (!cancelled) {
+        setMlOrder(out.orderedIds);
+        setMlOrderSource(out.source);
+      }
     });
     return () => {
       cancelled = true;
@@ -83,9 +90,15 @@ export function MechanicDirectoryPage() {
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader title="Find mechanics" description="Vetted mechanics currently accepting jobs. Locations shown are approximate until a job starts." />
-      {roster === null ? (
+      {roster === null && !feedError ? (
         <LoadingState label="Loading mechanics…" />
-      ) : roster.length === 0 ? (
+      ) : feedError ? (
+        <ErrorState
+          title="Mechanic directory unavailable"
+          description="The availability feed failed. This is NOT a confirmed 'no mechanics online' result — nothing was verified either way. Check your connection and retry."
+          action={<Button size="sm" variant="secondary" onClick={() => setRetry((n) => n + 1)}>Retry</Button>}
+        />
+      ) : (roster ?? []).length === 0 ? (
         <>
           <EmptyState title="No mechanics online right now" description="The current availability feed returned no approved, available mechanics. You can retry later, place an open request, or use the predefined Mechanic Bot for safe next steps." />
           <div className="mt-4 flex justify-center gap-3">
@@ -95,18 +108,27 @@ export function MechanicDirectoryPage() {
         </>
       ) : (
         <>
-          <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Specialty filter">
-            {FILTERS.map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setFilter(f)}
-                aria-pressed={filter === f}
-                className={`rounded-lg px-3 py-1.5 font-mono text-xs capitalize ${filter === f ? 'bg-safety-500/15 font-semibold text-safety-300' : 'text-steel-300 hover:text-cream'}`}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Specialty filter">
+              {FILTERS.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFilter(f)}
+                  aria-pressed={filter === f}
+                  className={`rounded-full border px-3 py-1.5 font-mono text-xs transition-colors capitalize ${filter === f ? 'border-safety-500/50 bg-safety-500/15 font-semibold text-safety-300' : 'border-line-soft text-steel-300 hover:border-line-strong hover:bg-graphite-soft/60 hover:text-cream'}`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+            {mlOrder && (
+              <Badge
+                tone={mlOrderSource === 'ml' ? 'brand' : 'neutral'}
               >
-                {f}
-              </button>
-            ))}
+                Ordered by {mlOrderSource === 'ml' ? 'ML ranking' : 'deterministic formula'}
+              </Badge>
+            )}
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map((m) => (
@@ -121,6 +143,25 @@ export function MechanicDirectoryPage() {
                   {(m.specialties ?? []).slice(0, 3).join(' · ') || 'General mechanic'}
                   {typeof m.rating === 'number' ? ` · ★ ${m.rating.toFixed(1)}` : ''}
                 </p>
+
+                {/* Factual recommendation highlights — not ML explainability. */}
+                {(() => {
+                  const highlights = explainMechanic({
+                    id: m.id,
+                    distanceKm: null,
+                    serviceMatch: filter === 'all' ? true : (m.specialties ?? []).some((s) => s.toLowerCase().includes(filter)),
+                    rating: typeof m.rating === 'number' ? m.rating : null,
+                    reviewCount: typeof m.reviewCount === 'number' ? m.reviewCount : null,
+                    problemCategory: FILTER_CATEGORY[filter],
+                    vehicleType: 'car',
+                  });
+                  const items = [highlights.distance, highlights.serviceMatch, highlights.rating, highlights.reviews].filter(Boolean);
+                  if (items.length === 0) return null;
+                  return (
+                    <p className="mt-1 text-xs text-steel-400">{items.join(' · ')}</p>
+                  );
+                })()}
+
                 <div className="mt-4 flex gap-2">
                   <Link to={`/mechanic/${m.id}`} className="inline-flex h-9 flex-1 items-center justify-center rounded-lg border border-line-soft text-sm font-medium hover:border-line-strong">
                     Details

@@ -15,7 +15,11 @@
     "test:emulator:rules": "firebase emulators:exec --only firestore --project roadassist-9c223 \"npm run test:emulator\"",
     "lint": "eslint .",
     "lint:rules": "node scripts/check-rules.mjs",
-    "build:functions": "npm --prefix functions run build"
+    "build:functions": "npm --prefix functions run build",
+    "dev:emulators": "node scripts/dev-emulators.mjs",
+    "seed:local": "node scripts/seed-local.mjs",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:install": "playwright install chromium"
   },
   "engines": {
     "node": ">=20"
@@ -26,12 +30,14 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
-    "react-router-dom": "^7.0.0"
+    "react-router-dom": "^7.0.0",
+    "unslop": "^0.1.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@firebase/rules-unit-testing": "^5.0.2",
     "@opentelemetry/api": "^1.9.1",
+    "@playwright/test": "^1.64.1",
     "@types/leaflet": "^1.9.22",
     "@types/node": "^22.5.5",
     "@types/react": "^18.3.5",

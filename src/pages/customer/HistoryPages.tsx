@@ -5,6 +5,7 @@ import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader }
 import { downloadCsv, toCsv } from '@/lib/analytics';
 import { getVehicle, watchMyRequests, watchRequest, type ServiceRequest, type Vehicle } from '@/lib/customer';
 import { DEMO_CUSTOMER_VEHICLES, getDemoCustomerRequests } from '@/lib/fixtures';
+import { requestRef } from '@/lib/reference';
 
 export function HistoryPage() {
   const { demoMode, user } = useAuth();
@@ -71,7 +72,7 @@ export function HistoryPage() {
               <Link to={`/history/${r.id}`} className="flex items-center justify-between gap-3 rounded-xl border border-line-soft px-4 py-3 hover:border-line-strong">
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-cream">{r.problemText}</span>
-                  <span className="font-mono text-xs text-steel-400">#{r.id.slice(-6).toUpperCase()} · {r.mechanicName ?? 'unassigned'}</span>
+                  <span className="font-mono text-xs text-steel-400">{requestRef(r.id)} · {r.mechanicName ?? 'unassigned'}</span>
                 </span>
                 <Badge tone={r.status === 'completed' ? 'success' : r.status === 'cancelled' ? 'danger' : 'brand'}>{r.status}</Badge>
               </Link>
@@ -132,7 +133,7 @@ export function HistoryDetailPage() {
       ) : (
         <Card>
           <div className="flex items-center justify-between">
-            <p className="font-mono text-xs text-steel-400">#{req.id.slice(-6).toUpperCase()}</p>
+            <p className="font-mono text-xs text-steel-400">{requestRef(req.id)}</p>
             <Badge tone={req.status === 'completed' ? 'success' : req.status === 'cancelled' ? 'danger' : 'brand'}>{req.status}</Badge>
           </div>
           <dl className="mt-3 grid gap-2 text-sm">

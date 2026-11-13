@@ -7,7 +7,7 @@ import { DEMO_MECHANIC_PROFILE } from '@/lib/fixtures';
 
 export function MechanicProfilePage() {
   const { demoMode, user } = useAuth();
-  const { record } = useMechanicAccess();
+  const { record } = useMechanicAccess(demoMode);
   const uid = user?.uid ?? '';
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -46,8 +46,10 @@ export function MechanicProfilePage() {
   async function toggle() {
     if (!uid || !record || demoMode) return;
     setBusy(true);
-    await setAvailability(uid, !record.isAvailable);
+    const ok = await setAvailability(uid, !record.isAvailable);
     setBusy(false);
+    // The snapshot owns the toggle state; a failed write must say so.
+    setNotice(ok ? null : 'Could not change availability. Your online status is unchanged — try again.');
   }
 
   const displayRating = demoMode ? DEMO_MECHANIC_PROFILE.rating : record?.rating;

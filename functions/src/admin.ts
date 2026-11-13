@@ -27,10 +27,31 @@ export function requireCallerAdmin(context: functions.https.CallableContext): vo
   }
 }
 
+/**
+ * Pure claim-merge for grant/revoke: preserves every other custom claim the
+ * account already carries (setCustomUserClaims REPLACES the whole map, so a
+ * naive `{admin: true}` would silently wipe unrelated claims). Revoke writes
+ * `admin: null`, which removes the key. Pure — unit-tested.
+ */
+export function nextClaims(existing: Record<string, unknown> | undefined, grant: boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(existing ?? {}) };
+  out.admin = grant ? true : null;
+  return out;
+}
+
+async function claimsForUid(uid: string): Promise<Record<string, unknown>> {
+  try {
+    const user = await getAuth().getUser(uid);
+    return user.customClaims ?? {};
+  } catch {
+    throw new functions.https.HttpsError('not-found', 'No such Firebase Auth user.');
+  }
+}
+
 export const grantAdminRole = functions.https.onCall(async (data, context) => {
   requireCallerAdmin(context);
   const uid = requireTargetUid(data);
-  await getAuth().setCustomUserClaims(uid, { admin: true });
+  await getAuth().setCustomUserClaims(uid, nextClaims(await claimsForUid(uid), true));
   try {
     await getFirestore()
       .collection('users')
@@ -57,7 +78,12 @@ export const grantAdminRole = functions.https.onCall(async (data, context) => {
 export const revokeAdminRole = functions.https.onCall(async (data, context) => {
   requireCallerAdmin(context);
   const uid = requireTargetUid(data);
-  await getAuth().setCustomUserClaims(uid, {});
+  // Last-operator safety: an admin cannot revoke their own claim (which
+  // would otherwise be silent self-lockout).
+  if (context.auth?.uid && context.auth.uid === uid) {
+    throw new functions.https.HttpsError('failed-precondition', 'Revoking your own admin claim is blocked — ask another administrator.');
+  }
+  await getAuth().setCustomUserClaims(uid, nextClaims(await claimsForUid(uid), false));
   try {
     const ref = getFirestore().collection('users').doc(uid);
     const snap = await ref.get();

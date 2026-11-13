@@ -53,6 +53,8 @@ export interface MechanicProfile {
   serviceRadiusKm?: number;
   isAvailable: boolean;
   rating?: number;
+  /** Exact rating sum maintained with reviewCount for edit-safe aggregation. */
+  ratingTotal?: number;
   reviewCount?: number;
   vehicleDescription?: string | null;
   garageName?: string;

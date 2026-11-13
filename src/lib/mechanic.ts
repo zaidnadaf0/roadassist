@@ -1,6 +1,7 @@
 import {
   Timestamp,
   collection,
+  collectionGroup,
   doc,
   getDoc,
   limit,
@@ -9,10 +10,12 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  writeBatch,
   setDoc,
   updateDoc,
   where,
   type DocumentData,
+  type DocumentReference,
   type Firestore,
   type Unsubscribe,
 } from 'firebase/firestore';
@@ -94,6 +97,10 @@ function asRequest(id: string, raw: DocumentData | undefined): ServiceRequest | 
   if (!raw) return null;
   return { id, ...(raw as Omit<ServiceRequest, 'id'>) };
 }
+function requestTimeMs(value: unknown): number {
+  if (value instanceof Timestamp) return value.toMillis();
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
 
 /* ---------------- profile / approval ---------------- */
 
@@ -107,15 +114,20 @@ export async function getMyMechanicRecord(uid: string): Promise<MechanicRecord |
   }
 }
 
-export function watchMyMechanicRecord(uid: string, cb: (r: MechanicRecord | null) => void): Unsubscribe | null {
+export function watchMyMechanicRecord(
+  uid: string,
+  cb: (r: MechanicRecord | null) => void,
+  onError: () => void,
+): Unsubscribe | null {
   try {
     const d = requireDb();
     return onSnapshot(
       doc(d, 'mechanics', uid),
       (snap) => cb(snap.exists() ? asRecord(snap.id, snap.data()) : null),
-      () => cb(null),
+      () => onError(),
     );
   } catch {
+    onError();
     return null;
   }
 }
@@ -150,36 +162,33 @@ export interface MechanicApplication {
  * Self-onboarding application. Writes approved:false + pending — approval
  * itself is exclusively server/admin-side. Contact goes to private/contact.
  */
-export async function applyAsMechanic(uid: string, app: MechanicApplication): Promise<boolean> {
-  try {
-    const d = requireDb();
-    await setDoc(doc(d, 'mechanics', uid), {
-      uid,
-      name: app.name.trim(),
-      approved: false,
-      verificationStatus: 'pending',
-      specialties: app.specialties,
-      vehicleTypes: app.vehicleTypes,
-      experienceYears: app.experienceYears,
-      serviceRadiusKm: app.serviceRadiusKm,
-      isAvailable: app.isAvailable,
-      vehicleDescription: app.vehicleDescription?.trim() || null,
-      garageName: app.garageName.trim(),
-      garageAddress: app.garageAddress.trim(),
-      baseLat: app.baseLat ?? null,
-      baseLng: app.baseLng ?? null,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    await setDoc(
-      doc(d, 'mechanics', uid, 'private', 'contact'),
-      { phone: app.phone?.trim() || null, email: app.email?.trim().toLowerCase() || null, updatedAt: serverTimestamp() },
-      { merge: true },
-    );
-    return true;
-  } catch {
-    return false;
-  }
+export async function applyAsMechanic(uid: string, app: MechanicApplication): Promise<void> {
+  const d = requireDb();
+  const batch = writeBatch(d);
+  batch.set(doc(d, 'mechanics', uid), {
+    uid,
+    name: app.name.trim(),
+    approved: false,
+    verificationStatus: 'pending',
+    specialties: app.specialties,
+    vehicleTypes: app.vehicleTypes,
+    experienceYears: app.experienceYears,
+    serviceRadiusKm: app.serviceRadiusKm,
+    isAvailable: app.isAvailable,
+    vehicleDescription: app.vehicleDescription?.trim() || null,
+    garageName: app.garageName.trim(),
+    garageAddress: app.garageAddress.trim(),
+    baseLat: app.baseLat ?? null,
+    baseLng: app.baseLng ?? null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  batch.set(
+    doc(d, 'mechanics', uid, 'private', 'contact'),
+    { phone: app.phone?.trim() || null, email: app.email?.trim().toLowerCase() || null, updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+  await batch.commit();
 }
 
 export interface MechanicContact {
@@ -262,29 +271,76 @@ export async function pushMechanicLocationToRequest(requestId: string, lat: numb
 
 /* ---------------- queue / jobs ---------------- */
 
-/** Open offers (rules: approved mechanics may read status==requested). */
+/** Requests reachable through a pending offer addressed to this mechanic. */
 export function watchIncoming(
   cb: (jobs: ServiceRequest[]) => void,
-  excludeUid?: string,
+  mechanicUid: string,
   onError?: (e: Error) => void,
 ): Unsubscribe | null {
   try {
     const d = requireDb();
-    return onSnapshot(
-      query(collection(d, 'requests'), where('status', '==', 'requested'), orderBy('createdAt', 'desc'), limit(20)),
-      (snap) => {
-        const jobs = snap.docs
-          .map((s) => asRequest(s.id, s.data()))
-          .filter((j): j is ServiceRequest => j !== null)
-          .filter((j) => !excludeUid || !(j.declinedBy ?? []).includes(excludeUid));
-        cb(jobs);
-      },
-      (err) => {
-        cb([]);
-        onError?.(err as Error);
-      },
+    const subscriptions = new Map<string, Unsubscribe>();
+    const requests = new Map<string, ServiceRequest>();
+    let stopped = false;
+    const emit = () => {
+      if (!stopped) {
+        cb([...requests.values()].sort((a, b) => requestTimeMs(b.createdAt) - requestTimeMs(a.createdAt)));
+      }
+    };
+    const offers = query(
+      collectionGroup(d, 'offers'),
+      where('mechanicId', '==', mechanicUid),
+      where('status', '==', 'pending'),
+      limit(50),
     );
+    const stopOffers = onSnapshot(offers, (snap) => {
+      const wanted = new Map<string, DocumentReference>();
+      for (const offer of snap.docs) {
+        const expiresAt = offer.data().expiresAt;
+        if (!(expiresAt instanceof Timestamp) || expiresAt.toMillis() <= Date.now()) continue;
+        const requestRef = offer.ref.parent.parent;
+        if (requestRef) wanted.set(requestRef.id, requestRef);
+      }
+      for (const [id, stop] of subscriptions) {
+        if (!wanted.has(id)) {
+          stop();
+          subscriptions.delete(id);
+          requests.delete(id);
+        }
+      }
+      for (const [id, requestRef] of wanted) {
+        if (subscriptions.has(id)) continue;
+        const stop = onSnapshot(requestRef, (requestSnap) => {
+          const job = requestSnap.exists() ? asRequest(requestSnap.id, requestSnap.data()) : null;
+          if (job?.status === 'requested' && !job.mechanicId && !(job.declinedBy ?? []).includes(mechanicUid)) {
+            requests.set(id, job);
+          } else {
+            requests.delete(id);
+          }
+          emit();
+        }, (err) => {
+          requests.delete(id);
+          emit();
+          // Expiry/cancellation can close access between the offer query and
+          // parent listener. Treat that expected race as removal from queue.
+          if ((err as { code?: string }).code !== 'permission-denied') onError?.(err as Error);
+        });
+        subscriptions.set(id, stop);
+      }
+      emit();
+    }, (err) => {
+      cb([]);
+      onError?.(err as Error);
+    });
+    return () => {
+      stopped = true;
+      stopOffers();
+      for (const stop of subscriptions.values()) stop();
+      subscriptions.clear();
+      requests.clear();
+    };
   } catch {
+    onError?.(new Error('Could not start mechanic offer feed.'));
     return null;
   }
 }
@@ -375,7 +431,13 @@ export async function releaseJob(requestId: string, mechanicId: string, reason: 
   }
 }
 
-export type AdvanceResult = 'advanced' | 'invalid_transition' | 'terminal' | 'forbidden' | 'error';
+export type AdvanceResult =
+  | 'advanced'
+  | 'invalid_transition'
+  | 'terminal'
+  | 'forbidden'
+  | 'error'
+  | 'estimate_required';
 
 export async function advanceJob(
   id: string,
@@ -397,6 +459,11 @@ export async function advanceJob(
         patch.mechanicLat = null;
         patch.mechanicLng = null;
         patch.mechanicLocationUpdatedAt = null;
+        // Completion requires an approved estimate — prevents unapproved repair billing.
+        const reqData = (snap.data() as ServiceRequest & { estimateStatus?: string });
+        if (reqData.estimateStatus !== 'approved') {
+          return 'estimate_required' as const;
+        }
         if (extra?.amountCents != null && Number.isFinite(extra.amountCents) && extra.amountCents >= 0) {
           patch.amountCents = Math.round(extra.amountCents);
         }
@@ -421,6 +488,120 @@ export interface EarningsSummary {
   jobs: number;
 }
 
+/* ------------- completion billing validation ------------- */
+
+/** Server-allowed bounds (firestore.rules mechanic completion branch). */
+export const MAX_AMOUNT_CENTS = 1_000_000; // ₹10,000
+export const MAX_DURATION_MIN = 1440; // 24h
+
+export type BillingParseResult =
+  | { ok: true; extra: { amountCents?: number; durationMin?: number } }
+  | { ok: false; error: string };
+
+/**
+ * Parse + validate the completion billing inputs against the exact bounds
+ * the server enforces. Rejects non-finite, negative, and over-limit values
+ * with a specific message so a typo can never silently complete a job
+ * without (or with an invalid) amount. Pure — unit-tested.
+ */
+export function parseBillingInput(amount: string, duration: string): BillingParseResult {
+  const cents = amount.trim() ? Math.round(Number(amount) * 100) : null;
+  const mins = duration.trim() ? Math.round(Number(duration)) : null;
+  if (cents != null && (!Number.isFinite(cents) || cents < 0)) {
+    return { ok: false, error: 'Amount must be 0 or a positive number (e.g. 499.00). Nothing was submitted.' };
+  }
+  if (mins != null && (!Number.isFinite(mins) || mins < 0)) {
+    return { ok: false, error: 'Duration must be 0 or a positive number of minutes. Nothing was submitted.' };
+  }
+  if (cents != null && cents > MAX_AMOUNT_CENTS) {
+    return { ok: false, error: `Amount exceeds the maximum allowed (₹${(MAX_AMOUNT_CENTS / 100).toLocaleString('en-IN')}). Nothing was submitted.` };
+  }
+  if (mins != null && mins > MAX_DURATION_MIN) {
+    return { ok: false, error: `Duration exceeds the maximum allowed (${MAX_DURATION_MIN} minutes). Nothing was submitted.` };
+  }
+  return {
+    ok: true,
+    extra: {
+      ...(cents != null ? { amountCents: cents } : {}),
+      ...(mins != null ? { durationMin: mins } : {}),
+    },
+  };
+}
+
+/** ---------- Repair estimate validation ---------- */
+
+/** Bounds mirroring firestore.rules mechanic estimate branch. */
+export const MAX_ESTIMATE_AMOUNT_CENTS = 1_000_000; // ₹10,000
+export const MAX_ESTIMATE_DURATION_MIN = 1440; // 24h
+
+export type EstimateParseResult =
+  | { ok: true; extra: { estimatedAmountCents?: number; estimatedDurationMin?: number; diagnosis?: string } }
+  | { ok: false; error: string };
+
+/**
+ * Parse + validate mechanic estimate inputs against server bounds.
+ * Diagnosis is optional free text; parts/labour amounts map to estimatedAmountCents.
+ * Pure — unit-tested.
+ */
+export function parseEstimateInput(
+  diagnosis: string | null | undefined,
+  amount: string | null | undefined,
+  duration: string | null | undefined,
+): EstimateParseResult {
+  const cents = amount && amount.trim() ? Math.round(Number(amount) * 100) : null;
+  const mins = duration && duration.trim() ? Math.round(Number(duration)) : null;
+
+  if (cents != null && (!Number.isFinite(cents) || cents < 0)) {
+    return { ok: false, error: 'Estimate amount must be 0 or a positive number. Nothing was submitted.' };
+  }
+  if (mins != null && (!Number.isFinite(mins) || mins < 0)) {
+    return { ok: false, error: 'Estimated duration must be 0 or a positive number of minutes. Nothing was submitted.' };
+  }
+  if (cents != null && cents > MAX_ESTIMATE_AMOUNT_CENTS) {
+    return { ok: false, error: `Estimate amount exceeds the maximum allowed (₹${(MAX_ESTIMATE_AMOUNT_CENTS / 100).toLocaleString('en-IN')}). Nothing was submitted.` };
+  }
+  if (mins != null && mins > MAX_ESTIMATE_DURATION_MIN) {
+    return { ok: false, error: `Estimated duration exceeds the maximum allowed (${MAX_ESTIMATE_DURATION_MIN} minutes). Nothing was submitted.` };
+  }
+  const diagnosisText = diagnosis ? diagnosis.trim() : null;
+  return {
+    ok: true,
+    extra: {
+      ...(cents != null ? { estimatedAmountCents: cents } : {}),
+      ...(mins != null ? { estimatedDurationMin: mins } : {}),
+      ...(diagnosisText ? { diagnosis: diagnosisText } : {}),
+    },
+  };
+}
+
+/** ---------- Offline payment validation ---------- */
+
+export type PaymentMethod = 'cash' | 'upi';
+
+export type PaymentParseResult =
+  | { ok: true; extra: { paymentMethod: PaymentMethod; amountCents: number } }
+  | { ok: false; error: string };
+
+/**
+ * Parse + validate an offline payment recording input.
+ * Payment is recorded by an authorized actor; it is NOT independently verified.
+ * Pure — unit-tested.
+ */
+export function parsePaymentInput(method: string | null | undefined, amount: string | null | undefined): PaymentParseResult {
+  const m = (method ?? '').trim() as PaymentMethod;
+  if (m !== 'cash' && m !== 'upi') {
+    return { ok: false, error: 'Payment method must be cash or UPI. Nothing was submitted.' };
+  }
+  const cents = amount && amount.trim() ? Math.round(Number(amount) * 100) : null;
+  if (cents == null || !Number.isFinite(cents) || cents < 0) {
+    return { ok: false, error: 'Payment amount must be 0 or a positive number. Nothing was submitted.' };
+  }
+  if (cents > MAX_AMOUNT_CENTS) {
+    return { ok: false, error: `Payment amount exceeds the maximum allowed (₹${(MAX_AMOUNT_CENTS / 100).toLocaleString('en-IN')}). Nothing was submitted.` };
+  }
+  return { ok: true, extra: { paymentMethod: m, amountCents: cents } };
+}
+
 /** Derived strictly from completed-job amounts (trusted server data). Pure — tested. */
 export function summarizeEarnings(items: ServiceRequest[]): EarningsSummary {
   let totalCents = 0;
@@ -433,4 +614,133 @@ export function summarizeEarnings(items: ServiceRequest[]): EarningsSummary {
     }
   }
   return { totalCents, jobs: count };
+}
+
+/** ---------- Estimate submission (assigned mechanic only) ---------- */
+
+export type SubmitEstimateResult =
+  | 'submitted'
+  | 'not_assigned'
+  | 'invalid_state'
+  | 'forbidden'
+  | 'error';
+
+/**
+ * Submit a repair estimate for an assigned job. Only the assigned mechanic may
+ * write estimate fields, and only while the request is open and uncompleted.
+ * Prevents modification after customer approval (estimateStatus === 'approved');
+ * a rejected estimate may be revised back to 'pending'.
+ */
+export async function submitEstimate(
+  id: string,
+  mechanicId: string,
+  diagnosis: string | null | undefined,
+  amount: string | null | undefined,
+  duration: string | null | undefined,
+): Promise<SubmitEstimateResult> {
+  try {
+    const d = requireDb();
+    const ref = doc(d, 'requests', id);
+    return await runTransaction(d, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return 'not_assigned' as const;
+      const data = snap.data() as ServiceRequest;
+      if (data.mechanicId !== mechanicId) return 'not_assigned' as const;
+      if (data.status === 'completed' || data.status === 'cancelled') return 'invalid_state' as const;
+      if (data.estimateStatus === 'approved') return 'invalid_state' as const;
+
+      const parsed = parseEstimateInput(diagnosis, amount, duration);
+      if (!parsed.ok) {
+        // Surface validation error as forbidden so the caller can display it.
+        throw new Error(parsed.error);
+      }
+
+      const patch: Record<string, unknown> = {
+        updatedAt: serverTimestamp(),
+      };
+      if (parsed.extra.estimatedAmountCents != null) patch.estimatedAmountCents = parsed.extra.estimatedAmountCents;
+      if (parsed.extra.estimatedDurationMin != null) patch.estimatedDurationMin = parsed.extra.estimatedDurationMin;
+      if (parsed.extra.diagnosis != null) patch.estimateDiagnosis = parsed.extra.diagnosis;
+      // A fresh estimate starts pending; a REJECTED estimate is resubmitted as a
+      // revision, so it must return to 'pending' for the customer to decide again.
+      if (data.estimateStatus == null || data.estimateStatus === 'rejected') {
+        patch.estimateStatus = 'pending';
+      }
+
+      tx.update(ref, patch);
+      return 'submitted' as const;
+    });
+  } catch (e) {
+    const code = (e as { code?: string } | null)?.code ?? '';
+    if (code.includes('permission-denied') || code.includes('PERMISSION_DENIED')) return 'forbidden';
+    return 'error';
+  }
+}
+
+/** ---------- Offline payment recording (authorized actor only) ---------- */
+
+export type RecordPaymentResult =
+  | 'recorded'
+  | 'not_assigned'
+  | 'invalid_state'
+  | 'amount_mismatch'
+  | 'forbidden'
+  | 'error';
+
+/**
+ * Record an offline (cash/UPI) payment for a completed job.
+ * Payment is recorded by an authorized actor; it is NOT independently verified.
+ *
+ * `actorUid` must be the AUTHENTICATED uid: authorization is decided by the
+ * document's own customerId/mechanicId, never by a caller-supplied customer id
+ * (the original signature let a stranger satisfy the ownership test by echoing
+ * the document's value).
+ *
+ * The rules allowlist stores no payment-amount field, so the completed job's
+ * `amountCents` is the only recorded figure. A conflicting amount is REFUSED
+ * rather than silently discarded.
+ */
+export async function recordPayment(
+  id: string,
+  actorUid: string,
+  method: string | null | undefined,
+  amount: string | null | undefined,
+): Promise<RecordPaymentResult> {
+  try {
+    const d = requireDb();
+    const ref = doc(d, 'requests', id);
+    return await runTransaction(d, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return 'not_assigned' as const;
+      const data = snap.data() as ServiceRequest;
+      if (data.customerId !== actorUid && data.mechanicId !== actorUid) return 'not_assigned' as const;
+      if (data.status !== 'completed') return 'invalid_state' as const;
+
+      const parsed = parsePaymentInput(method, amount);
+      if (!parsed.ok) {
+        throw new Error(parsed.error);
+      }
+
+      const billed =
+        typeof data.amountCents === 'number' && Number.isFinite(data.amountCents)
+          ? Math.round(data.amountCents)
+          : null;
+      if (billed != null && parsed.extra.amountCents !== billed) {
+        return 'amount_mismatch' as const;
+      }
+
+      tx.update(ref, {
+        paymentMethod: parsed.extra.paymentMethod,
+        paymentStatus: 'paid',
+        paidAt: Date.now(),
+        paidBy: actorUid,
+        updatedAt: serverTimestamp(),
+      });
+      return 'recorded' as const;
+    });
+  } catch (e) {
+    const code = (e as { code?: string } | null)?.code ?? '';
+    if (code.includes('permission-denied') || code.includes('PERMISSION_DENIED')) return 'forbidden';
+    return 'error';
+  }
 }

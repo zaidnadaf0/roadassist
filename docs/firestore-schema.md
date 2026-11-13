@@ -3,8 +3,10 @@
 Normalized, owner-scoped collections. Adapted from the proven MECHIST 1B/1C
 model; naming decision: `requests` (not `serviceRequests`) for MECHIST parity
 and shorter paths. Ratings live on the request + server-aggregated onto the
-mechanic — no separate `ratings` collection. No audit collection yet; trusted
-operations are logged via Cloud Functions logs until the M-log phase.
+mechanic — no separate `ratings` collection. The immutable `auditEvents/{id}`
+collection exists: written only by trusted Cloud Functions (approval and
+admin-claim changes), readable by claim-admins, and closed to all client
+writes (see firestore.rules).
 
 Conventions: `createdAt`/`updatedAt` on every doc (server timestamps where the
 client writes, Admin SDK timestamps server-side). Ownership fields are
@@ -77,7 +79,8 @@ client rewire are all included here.
 
 `ownerId` (frozen, == creator UID), `make, model, plate` strings, `year`
 number, `type` enum `car|bike|van|truck`, `isDefault` bool, `createdAt`.
-Owner-only CRUD (+ claim-admin read/delete). Create key allowlist enforced.
+Owner-only CRUD (+ claim-admin read; delete is owner-only). Create key allowlist
+enforced; updates allowlist the same bounded fields as create.
 
 ## requests/{id} — doc ID random
 
@@ -93,13 +96,45 @@ timestamp<int comparison is an evaluation error; clients write
 | customerId / vehicleId (owned) / problemText (5–2000) / problemCategory? / customerLat,Lng (finite) / pickedMechanicId? / status=`requested` / offerExpiresAt / mechanicId=null / createdAt, updatedAt | customer create | exact allowlist; vehicle must exist + be owned |
 | status→cancelled (+cancelledAt, cancelledBy=`customer`, reason ≤500) from live states; rating 1–5 + comment ≤500 on completed only | customer update | safe-transition matrix |
 | first assignment (status→accepted + mechanicId=self + name + etaMin 1–180, in-window) | approved mechanic | approval enforced in rules |
-| advance incl. live coords; amountCents 0–1e6 + durationMin 0–1440 on completed ONLY; rating fields + terminal states frozen | assigned mechanic | |
+| advance incl. live coords; amountCents 0–1e6 + durationMin 0–1440 on completed ONLY, and only with an approved estimate; rating fields + terminal states frozen | assigned mechanic | |
 | decline (append own UID), release (reset + reason ≤500 + future window + releasedAt timestamp) | mechanic | |
 | mechanicPhone (server-denormalized), mechanicLat/Lng (live, nulled on completion) | mechanic push + server | customer reads own request only |
 | ratingAggregated flag, phone attach, live-location cleanup | server triggers | Admin SDK |
 
 Reads: customer owner, assigned mechanic, approved mechanics for `requested`
 queue, claim-admin. Delete: claim-admin.
+
+## requests/{id} — repair estimate and offline payment (M17/M18)
+
+Two narrow, separate update paths. Both are allowlisted in `firestore.rules`
+and neither may be bundled with any other field.
+
+| Field | Type | Writer | Notes |
+|---|---|---|---|
+| `estimatedAmountCents` | number 0–1,000,000 | assigned mechanic | stored name is `estimated*`; UI/types must read the same name |
+| `estimatedDurationMin` | number 0–1,440 | assigned mechanic | |
+| `estimateDiagnosis` | string ≤2,000 or null | assigned mechanic | free-text diagnosis |
+| `estimateStatus` | `pending` \| `approved` \| `rejected` | mechanic submits `pending`; owning customer decides | a mechanic can never write `approved` |
+| `estimateApprovedAt` | number (epoch ms) | owning customer | `is number` — a `serverTimestamp()` sentinel is denied |
+| `paymentMethod` | `cash` \| `upi` | customer owner or assigned mechanic | offline record only |
+| `paymentStatus` | `paid` | same | one-way recording; `pending` is not storable |
+| `paidAt` | number (epoch ms) | same | |
+| `paidBy` | string (acting uid) | same | |
+
+Rules behaviour:
+
+- Estimate writes: assigned mechanic only, live (non-terminal) request only,
+  frozen once `estimateStatus == 'approved'`. A `rejected` estimate may be
+  revised back to `pending`.
+- Customer decision: owning customer only, only while `estimateStatus ==
+  'pending'`, and only `estimateStatus` / `estimateApprovedAt` / `updatedAt`.
+- **Completion requires `estimateStatus == 'approved'`** at the rules level;
+  `advanceJob()` refuses first, so the UI never relies on the rule error.
+- Payments: owning customer or assigned mechanic only, `completed` request
+  only, only the four payment fields.
+
+HONESTY: a recorded payment is what an authorized actor reported. Nothing here
+verifies a transaction; no analytics surface may label it verified revenue.
 
 ## notifications/{uid}/items/{id} — doc ID deterministic per event
 

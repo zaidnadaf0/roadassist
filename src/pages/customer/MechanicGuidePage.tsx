@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/app/AuthProvider';
 import { Badge, Button, Card, DemoNotice, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader } from '@/components/ui';
 import { createRequest, listVehicles, watchPublicMechanics, type Vehicle } from '@/lib/customer';
+import { useGeolocation } from '@/lib/geolocation';
 import { DEMO_CUSTOMER_VEHICLES, FIXTURE_MECHANICS, advanceDemoRequest } from '@/lib/fixtures';
 import {
   answerDemoBotScenario,
@@ -55,8 +56,19 @@ export function MechanicGuidePage() {
   const submissionStarted = useRef(false);
   const availabilityStop = useRef<(() => void) | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [geo, requestGeo] = useGeolocation();
 
   useEffect(() => () => { availabilityStop.current?.(); }, []);
+
+  // Autofill manual coordinates from a GPS fix — the user still reviews the
+  // draft before confirming (same trust model as the request wizard).
+  useEffect(() => {
+    if (geo.status === 'granted' && geo.coords) {
+      setLat(geo.coords.lat.toFixed(6));
+      setLng(geo.coords.lng.toFixed(6));
+      setConfirmed(false);
+    }
+  }, [geo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -279,6 +291,14 @@ export function MechanicGuidePage() {
             <div className="grid grid-cols-2 gap-3">
               <Field label="Latitude"><Input value={lat} onChange={(event) => { setLat(event.target.value); setConfirmed(false); }} inputMode="decimal" placeholder="12.9716" /></Field>
               <Field label="Longitude"><Input value={lng} onChange={(event) => { setLng(event.target.value); setConfirmed(false); }} inputMode="decimal" placeholder="77.5946" /></Field>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="secondary" onClick={requestGeo} disabled={geo.status === 'requesting'}>
+                {geo.status === 'requesting' ? 'Locating…' : 'Use my current location'}
+              </Button>
+              {(geo.status === 'denied' || geo.status === 'unavailable' || geo.status === 'timeout' || geo.status === 'error') && (
+                <span className="text-xs text-steel-400">{geo.error ?? 'Location unavailable'} — manual entry still works.</span>
+              )}
             </div>
           </div>
 

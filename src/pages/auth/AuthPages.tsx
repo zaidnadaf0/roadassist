@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/app/AuthProvider';
 import { safeNextPath } from '@/components/RequireAuth';
+import { useMechanicAccess } from '@/components/RequireMechanic';
 import { Button, Field, Input } from '@/components/ui';
 
 /**
@@ -62,10 +63,23 @@ function FormError({ message }: { message: string | null }) {
   );
 }
 
-function useAlreadyAuthedRedirect(): string | null {
-  const { status, home } = useAuth();
+function useAlreadyAuthedRedirect(portal: AuthPortal): string | null {
+  const { status, home, isAdmin, profileRole, authorizationResolved, demoMode } = useAuth();
+  const { access } = useMechanicAccess(demoMode && portal === 'mechanic');
   const [params] = useSearchParams();
-  if (status !== 'authenticated') return null;
+  if (status !== 'authenticated' || !authorizationResolved) return null;
+  if (isAdmin === true) return '/admin';
+  if (access === 'loading') return null;
+  if (access === 'error') {
+    if (portal === 'mechanic' || profileRole === 'mechanic') return '/m';
+    return safeNextPath(params.get('next')) ?? home;
+  }
+  if (access.kind !== 'none' || profileRole === 'mechanic') return '/m';
+  if (portal === 'mechanic') {
+    const next = safeNextPath(params.get('next'));
+    return next === '/m' || next?.startsWith('/m/') ? next : '/m/apply';
+  }
+  if (profileRole === 'admin') return '/app';
   return safeNextPath(params.get('next')) ?? home;
 }
 
@@ -73,14 +87,14 @@ export function LoginPage() {
   const { status, configured, signIn } = useAuth();
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const redirect = useAlreadyAuthedRedirect();
+  const portal = portalForPath(pathname);
+  const redirect = useAlreadyAuthedRedirect(portal);
   const [params] = useSearchParams();
   const next = safeNextPath(params.get('next'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const portal = portalForPath(pathname);
   const copy = AUTH_COPY[portal];
 
   if (redirect) return <Navigate to={redirect} replace />;
@@ -91,8 +105,13 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      const destination = await signIn(email, password);
-      navigate(next ?? destination, { replace: true });
+      const destination = await signIn(email, password, portal);
+      const target = destination === '/admin' || (portal === 'customer' && destination === '/m')
+        ? destination
+        : portal === 'mechanic'
+          ? (next === '/m' || next?.startsWith('/m/') ? next : destination)
+          : next ?? destination;
+      navigate(target, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
@@ -106,12 +125,12 @@ export function LoginPage() {
       {!configured && <BackendNotice />}
       <FormError message={error} />
       <Field label="Email">
-        <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required disabled={!configured} />
+        <Input data-testid="login-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required disabled={!configured} />
       </Field>
       <Field label="Password">
-        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" required disabled={!configured} />
+        <Input data-testid="login-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" required disabled={!configured} />
       </Field>
-      <Button type="submit" disabled={!configured || busy || status === 'loading'}>
+      <Button data-testid="login-submit" type="submit" disabled={!configured || busy || status === 'loading'}>
         {busy ? 'Signing in…' : 'Log in'}
       </Button>
       <p className="text-sm text-steel-300">
@@ -134,7 +153,8 @@ export function SignupPage() {
   const navigate = useNavigate();
   const portal = portalForPath(pathname);
   const copy = AUTH_COPY[portal];
-  const next = useNext(portal === 'mechanic' ? '/m/apply' : home);
+  const requestedNext = useNext(portal === 'mechanic' ? '/m/apply' : home);
+  const next = portal === 'mechanic' && requestedNext !== '/m' && !requestedNext.startsWith('/m/') ? '/m/apply' : requestedNext;
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -154,7 +174,7 @@ export function SignupPage() {
     setError(null);
     try {
       await signUp({ displayName: name, email, password });
-      navigate('/verify', { replace: true });
+      navigate(`/verify?next=${encodeURIComponent(next)}`, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
@@ -284,6 +304,8 @@ export function VerifyPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [params] = useSearchParams();
+  const continueTo = safeNextPath(params.get('next')) ?? '/app';
 
   if (status === 'unauthenticated') {
     return (
@@ -306,7 +328,7 @@ export function VerifyPage() {
           arrives with the M3 security phase.
         </p>
         <p className="text-sm text-steel-300">
-          <Link to="/app" className="font-medium text-safety-400 hover:text-safety-300">
+          <Link to={continueTo} className="font-medium text-safety-400 hover:text-safety-300">
             Continue to dashboard →
           </Link>
         </p>

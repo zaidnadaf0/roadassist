@@ -18,7 +18,7 @@ export function ServicesPage() {
             <p className="mt-1 text-sm text-steel-300">{s.desc}</p>
             <p className="mt-3 font-mono text-xs text-steel-400">from ₹{s.base} · {s.eta}</p>
             <Link
-              to={`/request?service=${s.id}`}
+              to={`/request?service=${s.id}&category=${s.category}`}
               className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-safety-500 px-5 text-sm font-semibold text-white hover:bg-safety-600"
             >
               Book {s.name}

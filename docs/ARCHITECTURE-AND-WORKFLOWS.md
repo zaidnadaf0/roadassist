@@ -117,7 +117,7 @@ Every page has an explicit loading, empty or error component where its repositor
 
 ## 3. Data model and security boundary
 
-The main collections are `users/{uid}`, `vehicles/{id}`, `requests/{id}`, `mechanics/{uid}`, `publicMechanics/{uid}`, `offers/{requestId}/items/{mechanicId}`, `notifications/{uid}/items/{id}`, `auditEvents/{id}` and `system/aggregates`. Exact field allowlists and role rules are in `firestore.rules` and `docs/firestore-schema.md`.
+The main collections are `users/{uid}`, `vehicles/{id}`, `requests/{id}`, `mechanics/{uid}`, `publicMechanics/{uid}`, `requests/{id}/offers/{mechanicId}` (subcollection — server-written only), `notifications/{uid}/items/{id}` and `auditEvents/{id}`. Exact field allowlists and role rules are in `firestore.rules` and `docs/firestore-schema.md`.
 
 - Customers may create requests only for their own vehicle, with bounded problem text, valid coordinates, requested status and no mechanic assignment. The deterministic request document key is used by the client retry path; the emulator test confirms duplicate/conflicting writes do not overwrite the stored record.
 - Offers are server-created. Clients cannot create, edit or delete offers.
@@ -202,26 +202,28 @@ The emulator output still prints evaluation-budget diagnostics on intentionally 
 
 Browser smoke verification covered `/guide`, scenario selection, brake safety, fuel-leak emergency handling, restart/menu controls and the existing availability feed. Full authenticated cross-role journey, GPS permission, responsive layout and production Firebase verification remain unverified.
 
-## 6. Current 14-phase completion matrix
+## 6. Current 14-phase completion matrix (updated after hardening phases 1–7)
 
 | Phase | Primary status | Evidence and remaining work |
 |---|---|---|
-| 0 | Partially implemented | Structure and this architecture document exist; issue tracking/release baseline is not a formal process. |
-| 1 | Partially implemented | Firebase client, schemas, rules, indexes and type contracts exist; production configuration/runtime is not verified here. |
-| 2 | Partially implemented | Dedicated role entry points and Firebase auth flows exist; authenticated browser and email-verification runtime are not verified. |
-| 3 | Completed and verified | Offer ownership, missing-offer acceptance and client write boundaries pass emulator tests. |
-| 4 | Completed and verified | Transactional assignment, concurrent winner and lifecycle transition tests pass in the fresh emulator run. |
-| 5 | Partially implemented | Deterministic request retries, expiry, decline and rematch pass; full authenticated browser retry journey remains unverified. |
-| 6 | Partially implemented | Customer/mechanic repositories, pages and actions exist; full cross-role browser journey remains unverified. |
-| 7 | Partially implemented | Leaflet markers, geolocation boundaries, freshness and cleanup exist; road routing/ETA is not implemented and mobile/GPS browser checks remain. |
-| 8 | Partially implemented | Predefined eight-scenario Demo Mechanic Bot, follow-up guidance, safety precedence, availability-feed integration, demo isolation and confirmation workflow are implemented and unit/browser-checked; no actual AI provider is in scope, and authenticated live availability plus full cross-role browser coverage remain unverified. |
-| 9 | Partially implemented | ML API, model artifact and tests exist; live dispatch integration is intentionally absent. |
-| 10 | Partially implemented | Claim-gated admin screens, approval flows, reports and trusted audit events exist; full browser operations and broader event coverage remain. |
-| 11 | Partially implemented | All 54 registered routes have real components and role-specific layouts; route-by-route browser/responsive verification remains. |
-| 12 | Partially implemented | Unit, build, Functions, rules scanner and 63 emulator tests pass; browser E2E and GPS scenarios remain. |
-| 13 | Partially implemented | Setup/schema/architecture documentation exists; deployment, CI, monitoring and production release evidence are incomplete. |
+| 0 | Implemented | Structure, architecture docs, deployment checklist, CI workflow and demo script exist; formal issue tracking remains informal. |
+| 1 | Implemented (emulator-verified) | Firebase client, schemas, rules, indexes and type contracts exist; production configuration/runtime remains unverified. |
+| 2 | Implemented (emulator-verified) | Role entry points and Firebase auth flows exist; browser journeys verified against the emulator (see DEPLOYMENT-CHECKLIST §3b); email-verification runtime remains unverified. |
+| 3 | Completed and verified | Offer ownership, missing-offer acceptance and client write boundaries pass emulator tests; server-only assignment (no client accept path) is pinned by rules, linter and browser tests. |
+| 4 | Completed and verified | Transactional assignment, concurrent winner and lifecycle transition tests pass; verified end-to-end in the browser via the Functions emulator. |
+| 5 | Implemented | Deterministic request retries (including the browser idempotency path), expiry, decline and rematch pass; sweep rematch covers stranded requests. |
+| 6 | Implemented | Customer/mechanic repositories, pages and actions verified by cross-role browser journeys against the emulator. |
+| 7 | Implemented | Leaflet markers, geolocation granted/denied/unavailable flows browser-verified; road routing/ETA is not implemented and real-device GPS checks remain. |
+| 8 | Implemented | Predefined eight-scenario Demo Mechanic Bot with emergency triage verified in the browser (fire text blocks submission); no AI provider in scope. |
+| 9 | Implemented | ML API, artifact, 20 passing tests, range validation and artifact-schema guard; live dispatch integration intentionally absent. |
+| 10 | Implemented | Claim-gated admin screens, approval flows with browser-verified audit events, reports; direct console writes remain unaudited (documented). |
+| 11 | Implemented | All routes have real components; desktop and 390px/820px rendering checked — mobile horizontal overflow on live dashboards is a documented, deferred polish item. |
+| 12 | Implemented | Typecheck, lint, 142 unit tests, 69 emulator tests, rules scanner, both production builds and the ML suite pass; real-device E2E remains. |
+| 13 | Implemented (local) | Docs, CI workflow, deployment checklist and rollback notes exist; monitoring, production release and formal security review remain. |
 
-No arbitrary project percentage is used. The two completed phases are security-sensitive backend phases with direct emulator evidence; the remaining phases have implementation but at least one required runtime, scope or production-readiness condition is still open.
+No arbitrary project percentage is used. The remaining open conditions are
+production-runtime (real Firebase project, monitoring, formal review) and
+real-device checks — everything verifiable locally has been verified.
 
 ## 7. Demo-ready versus production-ready
 

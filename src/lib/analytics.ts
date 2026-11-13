@@ -59,6 +59,15 @@ export interface RequestRow {
   amountCents?: number | null;
   durationMin?: number | null;
   mechanicId?: string | null;
+  estimatedAmountCents?: number | null;
+  estimatedDurationMin?: number | null;
+  estimateDiagnosis?: string | null;
+  estimateStatus?: 'pending' | 'approved' | 'rejected' | null;
+  estimateApprovedAt?: number | null;
+  paymentMethod?: 'cash' | 'upi' | null;
+  paymentStatus?: 'pending' | 'paid' | null;
+  paidAt?: number | null;
+  paidBy?: string | null;
 }
 
 export interface OfferRow {
@@ -70,7 +79,24 @@ export interface OfferRow {
 
 /** Normalize a raw request doc into an analytics row (drops nothing silently — unparseable rows are excluded and COUNTED). */
 export function normalizeRequests(
-  raws: { id: string; status?: unknown; problemCategory?: unknown; createdAt?: unknown; amountCents?: unknown; durationMin?: unknown; mechanicId?: unknown }[],
+  raws: {
+    id: string;
+    status?: unknown;
+    problemCategory?: unknown;
+    createdAt?: unknown;
+    amountCents?: unknown;
+    durationMin?: unknown;
+    mechanicId?: unknown;
+    estimatedAmountCents?: unknown;
+    estimatedDurationMin?: unknown;
+    estimateDiagnosis?: unknown;
+    estimateStatus?: unknown;
+    estimateApprovedAt?: unknown;
+    paymentMethod?: unknown;
+    paymentStatus?: unknown;
+    paidAt?: unknown;
+    paidBy?: unknown;
+  }[],
 ): { rows: RequestRow[]; excluded: number } {
   const rows: RequestRow[] = [];
   let excluded = 0;
@@ -87,6 +113,20 @@ export function normalizeRequests(
       amountCents: typeof r.amountCents === 'number' && Number.isFinite(r.amountCents) ? r.amountCents : null,
       durationMin: typeof r.durationMin === 'number' && Number.isFinite(r.durationMin) ? r.durationMin : null,
       mechanicId: typeof r.mechanicId === 'string' ? r.mechanicId : null,
+      estimatedAmountCents: typeof r.estimatedAmountCents === 'number' && Number.isFinite(r.estimatedAmountCents) ? r.estimatedAmountCents : null,
+      estimatedDurationMin: typeof r.estimatedDurationMin === 'number' && Number.isFinite(r.estimatedDurationMin) ? r.estimatedDurationMin : null,
+      estimateDiagnosis: typeof r.estimateDiagnosis === 'string' ? r.estimateDiagnosis : null,
+      // Enumerated values are checked against their exact domain: an unknown
+      // string is dropped to null instead of being smuggled into a typed union
+      // (the rules only ever store these values).
+      estimateStatus: r.estimateStatus === 'pending' || r.estimateStatus === 'approved' || r.estimateStatus === 'rejected'
+        ? r.estimateStatus
+        : null,
+      estimateApprovedAt: typeof r.estimateApprovedAt === 'number' && Number.isFinite(r.estimateApprovedAt) ? r.estimateApprovedAt : null,
+      paymentMethod: r.paymentMethod === 'cash' || r.paymentMethod === 'upi' ? r.paymentMethod : null,
+      paymentStatus: r.paymentStatus === 'pending' || r.paymentStatus === 'paid' ? r.paymentStatus : null,
+      paidAt: typeof r.paidAt === 'number' && Number.isFinite(r.paidAt) ? r.paidAt : null,
+      paidBy: typeof r.paidBy === 'string' ? r.paidBy : null,
     });
   }
   return { rows, excluded };
@@ -269,11 +309,102 @@ export function mechanicPerf(
   };
 }
 
-/** Minimal CSV serializer (quotes fields containing , " or newline). Pure — tested. */
+/** ---------- Estimate and payment analytics ---------- */
+
+export interface EstimatePaymentSummary {
+  totalEstimates: number;
+  estimatesByStatus: Record<'pending' | 'approved' | 'rejected', number>;
+  totalEstimatedAmountCents: number | null;
+  estimatesWithAmount: number;
+  totalApprovedEstimateAmountCents: number | null;
+  approvedEstimatesWithAmount: number;
+  cashPayments: number;
+  upiPayments: number;
+  /**
+   * FINANCIAL HONESTY: completed jobs with NO recorded payment yet.
+   * The rules only ever store `paymentStatus === 'paid'` (offline recording is a
+   * one-way write), so a literal `paymentStatus === 'pending'` counter is
+   * unreachable and would always report 0 — mislabelling unpaid jobs as paid.
+   * The field name is preserved; its meaning is "awaiting a recorded payment".
+   */
+  pendingPayments: number;
+  /** Completed jobs whose payment was RECORDED (not independently verified). */
+  paidPayments: number;
+}
+
+/**
+ * Aggregate estimate and payment records over request rows.
+ * All monetary figures are recorded amounts — not independently verified revenue.
+ * Pure — tested.
+ */
+export function estimatePaymentSummary(rows: RequestRow[]): EstimatePaymentSummary {
+  let totalEstimates = 0;
+  const estimatesByStatus: Record<'pending' | 'approved' | 'rejected', number> = { pending: 0, approved: 0, rejected: 0 };
+  let totalEstimatedAmountCents: number | null = null;
+  let estimatesWithAmount = 0;
+  let totalApprovedEstimateAmountCents: number | null = null;
+  let approvedEstimatesWithAmount = 0;
+  let cashPayments = 0;
+  let upiPayments = 0;
+  let pendingPayments = 0;
+  let paidPayments = 0;
+
+  for (const r of rows) {
+    if (r.estimateStatus === 'pending') {
+      totalEstimates++;
+      estimatesByStatus.pending++;
+    } else if (r.estimateStatus === 'approved') {
+      totalEstimates++;
+      estimatesByStatus.approved++;
+    } else if (r.estimateStatus === 'rejected') {
+      totalEstimates++;
+      estimatesByStatus.rejected++;
+    }
+
+    if (typeof r.estimatedAmountCents === 'number' && Number.isFinite(r.estimatedAmountCents) && r.estimatedAmountCents >= 0) {
+      if (totalEstimatedAmountCents == null) totalEstimatedAmountCents = 0;
+      totalEstimatedAmountCents += Math.round(r.estimatedAmountCents);
+      estimatesWithAmount++;
+      if (r.estimateStatus === 'approved') {
+        if (totalApprovedEstimateAmountCents == null) totalApprovedEstimateAmountCents = 0;
+        totalApprovedEstimateAmountCents += Math.round(r.estimatedAmountCents);
+        approvedEstimatesWithAmount++;
+      }
+    }
+
+    if (r.paymentMethod === 'cash') cashPayments++;
+    else if (r.paymentMethod === 'upi') upiPayments++;
+
+    // Completed jobs without a recorded payment are the only reachable
+    // "pending" population: the rules forbid writing paymentStatus 'pending'.
+    if (r.paymentStatus === 'paid') paidPayments++;
+    else if (r.status === 'completed') pendingPayments++;
+  }
+
+  return {
+    totalEstimates,
+    estimatesByStatus,
+    totalEstimatedAmountCents,
+    estimatesWithAmount,
+    totalApprovedEstimateAmountCents,
+    approvedEstimatesWithAmount,
+    cashPayments,
+    upiPayments,
+    pendingPayments,
+    paidPayments,
+  };
+}
+
+/**
+ * Minimal CSV serializer (quotes fields containing , " or newline). String
+ * cells beginning with = + - @ or a tab are prefixed with `'` so a crafted
+ * value cannot execute as a spreadsheet formula on open. Pure — tested.
+ */
 export function toCsv(headers: string[], rows: (string | number | null | undefined)[][]): string {
   const esc = (v: string | number | null | undefined): string => {
     const s = v == null ? '' : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    const guarded = /^[=+\-@\t]/.test(s) ? `'${s}` : s;
+    return /[",\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
   };
   return [headers.map(esc).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\n');
 }

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import time
 import uuid
 from pathlib import Path
@@ -19,7 +20,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger("roadassist-ml")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -33,11 +34,18 @@ VEHICLE_TYPES = {"bike", "car", "truck", "van"}
 def _load():
     import sys
     sys.path.insert(0, str(MODEL_DIR.parent))
+    from features import FEATURE_ORDER  # noqa: E402
     from preprocess import Preprocessor  # noqa: E402
     model = joblib.load(MODEL_DIR / "model.joblib")
     prep: Preprocessor = joblib.load(MODEL_DIR / "preprocessor.joblib")
     import json
     meta = json.loads((MODEL_DIR / "metadata.json").read_text(encoding="utf-8"))
+    # Fail startup on artifact/schema drift: frozen coefficients against a
+    # reordered feature list would score garbage while still returning 200s.
+    if list(meta.get("feature_order") or []) != list(FEATURE_ORDER):
+        raise RuntimeError(
+            "model artifact feature_order does not match features.FEATURE_ORDER — retrain before serving"
+        )
     return model, prep, meta
 
 
@@ -89,6 +97,45 @@ class CandidateIn(BaseModel):
             raise ValueError("rating must be 1-5 or omitted")
         return v
 
+    @field_validator("distance_km")
+    @classmethod
+    def _distance_range(cls, v: float) -> float:
+        # Training-data bounds (ml/clean.py): a client cannot vault a mechanic
+        # to the top with a negative or absurd distance.
+        if not 0.0 <= v <= 500.0:
+            raise ValueError("distance_km must be within 0-500 km")
+        return v
+
+    @field_validator("service_radius_km")
+    @classmethod
+    def _radius_range(cls, v: float) -> float:
+        if not 1.0 <= v <= 200.0:
+            raise ValueError("service_radius_km must be within 1-200 km")
+        return v
+
+    @field_validator("acceptance_rate_hist", "completion_rate_hist")
+    @classmethod
+    def _rate_range(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("historical rates must be within 0-1")
+        return v
+
+    @field_validator("review_count", "experience_years", "active_jobs", "eligible_count", "offer_round", "avg_response_min_hist")
+    @classmethod
+    def _sane_caps(cls, v: Any, info: Any) -> Any:
+        caps = {
+            "review_count": 100_000,
+            "experience_years": 60,
+            "active_jobs": 100,
+            "eligible_count": 1_000,
+            "offer_round": 10,
+            "avg_response_min_hist": 10_080,
+        }
+        cap = caps.get(getattr(info, "field_name", "") or "")
+        if v is not None and cap is not None and not 0 <= float(v) <= cap:
+            raise ValueError(f"{info.field_name} must be within 0-{cap}")
+        return v
+
     @field_validator("service_match", "within_radius", "availability")
     @classmethod
     def _binary(cls, v: int) -> int:
@@ -134,10 +181,24 @@ class CandidateIn(BaseModel):
 
 class RankRequest(BaseModel):
     request_id: Optional[str] = None
-    candidates: list[CandidateIn]
+    candidates: list[CandidateIn] = Field(default=[], max_length=100)
 
 
 app = FastAPI(title="RoadAssist ML ranking", version=VERSION)
+
+# CORS is FAIL-CLOSED: without ML_ALLOWED_ORIGINS no browser origin may call
+# this service (server-to-server callers are unaffected). Set it to a comma-
+# separated origin list only when the browser seam is actually deployed.
+_ALLOWED_ORIGINS = os.environ.get("ML_ALLOWED_ORIGINS", "").strip()
+if _ALLOWED_ORIGINS:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in _ALLOWED_ORIGINS.split(",") if o.strip()],
+        allow_methods=["POST", "GET"],
+        allow_headers=["Content-Type"],
+    )
 
 
 def _log(corr: str, event: str, **fields: Any) -> None:

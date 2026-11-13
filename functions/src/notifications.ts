@@ -173,7 +173,7 @@ export function noticesForTransition(
             title: 'Job cancelled',
             body: `${ref} was cancelled.${reason}`,
             requestId: after.id,
-            path: `/mechanic/requests`,
+            path: `/m/requests`,
           },
         });
       }

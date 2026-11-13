@@ -2,4 +2,11 @@
 numpy==2.4.2
 pandas==3.0.5
 scikit-learn==1.8.0
+# Ranking API (ml/api/main.py) + its test client.
+fastapi==0.141.1
+uvicorn==0.52.4
+httpx==0.28.1
+pydantic==2.12.5
+joblib==1.5.3
+# Tests
 pytest>=8.0

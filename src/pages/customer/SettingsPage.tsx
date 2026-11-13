@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/app/AuthProvider';
 import { firebaseProjectId } from '@/lib/firebase';
@@ -7,6 +8,7 @@ import { DEMO_CUSTOMER_PROFILE, resetDemoState } from '@/lib/fixtures';
 export function SettingsPage() {
   const { configured, demoMode, setDemoMode, signOut, user } = useAuth();
   const navigate = useNavigate();
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -40,13 +42,15 @@ export function SettingsPage() {
         <Card>
           <p className="font-semibold text-cream">Sign out</p>
           <p className="mt-1 text-sm text-steel-300">Ends this session on this device.</p>
+          {signOutError && <p role="alert" className="mt-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-cream">{signOutError}</p>}
           <div className="mt-3">
             <Button
               variant="secondary"
               onClick={() => {
-                void signOut().then(() => {
-                  window.location.href = '/login';
-                });
+                setSignOutError(null);
+                signOut()
+                  .then(() => { window.location.href = '/login'; })
+                  .catch(() => setSignOutError('Sign out failed. Your session is still active — try again, or close this browser window to end it.'));
               }}
             >
               Sign out

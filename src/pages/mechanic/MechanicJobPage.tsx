@@ -15,12 +15,15 @@ import {
   NEXT_STATUS,
   RELEASABLE,
   advanceJob,
+  parseBillingInput,
   pushMechanicLocation,
   pushMechanicLocationToRequest,
   releaseJob,
+  submitEstimate,
   type ServiceRequest,
 } from '@/lib/mechanic';
 import { advanceDemoRequest, getDemoMechanicActive, getDemoMechanicHistory, getDemoMechanicIncoming } from '@/lib/fixtures';
+import { requestRef } from '@/lib/reference';
 
 const LABEL: Record<string, string> = {
   accepted: 'Accepted',
@@ -38,11 +41,15 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
   const [reason, setReason] = useState('');
   const [amount, setAmount] = useState('');
   const [duration, setDuration] = useState('');
+  const [estimateDiagnosis, setEstimateDiagnosis] = useState('');
+  const [estimateAmount, setEstimateAmount] = useState('');
+  const [estimateDuration, setEstimateDuration] = useState('');
+  const [estimating, setEstimating] = useState(false);
 
   const next = NEXT_STATUS[job.status];
   const mine = demoMode ? job.id.startsWith('demo-') : job.mechanicId === uid;
   const releasable = mine && RELEASABLE.includes(job.status);
-  const tracking = !demoMode && mine && ['accepted', 'on-the-way', 'arrived', 'service'].includes(job.status);
+  const tracking = !demoMode && mine && ['accepted', 'on-the-way'].includes(job.status);
   const [geo] = useWatchPosition({ enabled: tracking, ...LIVE_THROTTLE });
   const [pushNote, setPushNote] = useState<string | null>(null);
 
@@ -70,15 +77,15 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
     if (!next) return;
     let extra: { amountCents?: number; durationMin?: number } | undefined;
     if (next === 'completed') {
-      // Validate billing before submit: a typo like "4 9" would silently
-      // become NaN and the transaction would complete with no amount.
-      const cents = amount.trim() ? Math.round(Number(amount) * 100) : null;
-      const mins = duration.trim() ? Math.round(Number(duration)) : null;
-      if ((cents != null && !Number.isFinite(cents)) || (mins != null && !Number.isFinite(mins))) {
-        setNotice('Billing fields must be plain numbers (e.g. 499.00 and 25). Nothing was submitted.');
+      // Validate billing before submit against the server-allowed bounds: a
+      // typo, a negative value, or an over-cap amount must never silently
+      // complete (or fail opaquely on) the job.
+      const parsed = parseBillingInput(amount, duration);
+      if (!parsed.ok) {
+        setNotice(parsed.error);
         return;
       }
-      extra = { ...(cents != null ? { amountCents: cents } : {}), ...(mins != null ? { durationMin: mins } : {}) };
+      extra = parsed.extra;
     }
     setBusy(true);
     if (demoMode) {
@@ -96,16 +103,37 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
       res === 'advanced' ? `Status → ${LABEL[next]}.`
       : res === 'invalid_transition' ? 'That step is not allowed from here.'
       : res === 'terminal' ? 'This job is already closed.'
+      : res === 'estimate_required'
+        ? 'Cannot complete without an approved estimate. Submit an estimate and wait for customer approval first.'
       : res === 'forbidden' ? 'Not permitted.'
       : 'Could not update. Try again.',
     );
     if (res === 'advanced' && next === 'completed') navigate('/m/history', { replace: true });
   }
 
+  async function submitEst() {
+    if (!mine) return;
+    setEstimating(true);
+    setNotice(null);
+    const res = await submitEstimate(job.id, uid, estimateDiagnosis.trim() || null, estimateAmount.trim() || null, estimateDuration.trim() || null);
+    setEstimating(false);
+    setNotice(
+      res === 'submitted'
+        ? 'Estimate submitted. Awaiting customer approval before completion.'
+        : res === 'not_assigned'
+          ? 'This job is not assigned to you.'
+          : res === 'invalid_state'
+            ? 'Cannot submit an estimate at this stage or after approval.'
+            : res === 'forbidden'
+              ? 'Not permitted.'
+              : 'Could not submit estimate. Try again.',
+    );
+  }
+
   async function release() {
     if (demoMode) {
       setReleasing(false);
-      setNotice('Demo release recorded locally; the sample offer is available again after refresh.');
+      setNotice('Demo release is a presentation-only action — no sample state was changed and Firebase was never touched.');
       return;
     }
     if (!reason.trim()) {
@@ -131,7 +159,7 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-steel-500">#{job.id.slice(-6).toUpperCase()}</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-steel-500">{requestRef(job.id)}</p>
             <p className="mt-1 font-bold text-cream">{job.problemText}</p>
           </div>
           <Badge tone="brand">{job.status}</Badge>
@@ -145,7 +173,9 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
         </dl>
         {!mine && (
           <p className="mt-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-cream">
-            Assigned to another mechanic. You can view details but cannot change this job.
+            {job.status === 'requested'
+              ? 'Not assigned yet — this request is still open in the queue. You can accept it from Incoming requests while your offer is live.'
+              : 'Assigned to another mechanic. You can view details but cannot change this job.'}
           </p>
         )}
       </Card>
@@ -172,7 +202,7 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
         {mine && tracking && (
           <p className="mt-2 text-xs text-steel-400" role="status">
             {geo.status === 'granted' && geo.coords
-              ? `Sharing live location (±${geo.coords.accuracy != null ? Math.round(geo.coords.accuracy) : '–'} m). Stops when the job closes.`
+              ? `Sharing live location (±${geo.coords.accuracy != null ? Math.round(geo.coords.accuracy) : '–'} m) with the customer. Stops automatically on arrival.`
               : geo.status === 'requesting'
                 ? 'Acquiring location…'
                 : geo.status !== 'idle'
@@ -184,12 +214,52 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
           <p role="alert" className="mt-2 text-xs text-warning">{pushNote}</p>
         )}
         {!tracking && (
-          <p className="mt-2 text-xs text-steel-400">Location sharing is off — no active leg on this job.</p>
+          <p className="mt-2 text-xs text-steel-400">
+            {mine && ['arrived', 'service', 'completed'].includes(job.status)
+              ? 'Location sharing is off — you are on site, so there is no journey left to share.'
+              : 'Location sharing is off — no active leg on this job.'}
+          </p>
         )}
       </Card>
 
       {notice && (
         <p role="status" className="rounded-xl border border-line-soft bg-graphite-soft px-4 py-3 text-sm text-cream">{notice}</p>
+      )}
+
+      {/* Estimate submission card — shown before completion, only for assigned mechanic */}
+      {mine && job.status !== 'completed' && job.status !== 'cancelled' && (
+        <Card>
+          <p className="font-semibold text-cream">Repair estimate</p>
+          <p className="text-sm text-steel-300">
+            Submit your diagnosis and estimated cost before completing the job.
+            The customer must approve this estimate before work can be marked complete.
+          </p>
+          {(job.estimateStatus === 'approved' || job.estimateStatus === 'rejected') && (
+            <p className="mt-2 text-xs text-steel-400">
+              Estimate status: <span className="font-medium capitalize">{job.estimateStatus}</span>
+              {job.estimateStatus === 'approved' ? ' — approval required before completion.' : ''}
+            </p>
+          )}
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            <Field label="Diagnosis">
+              <Input data-testid="estimate-diagnosis" value={estimateDiagnosis} onChange={(e) => setEstimateDiagnosis(e.target.value)} placeholder="e.g. Battery dead, alternator not charging" />
+            </Field>
+            <Field label="Estimated amount (₹)">
+              <Input data-testid="estimate-amount" value={estimateAmount} onChange={(e) => setEstimateAmount(e.target.value)} placeholder="e.g. 499" inputMode="decimal" />
+            </Field>
+            <Field label="Estimated duration (min)">
+              <Input data-testid="estimate-duration" value={estimateDuration} onChange={(e) => setEstimateDuration(e.target.value)} placeholder="e.g. 45" inputMode="numeric" />
+            </Field>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button data-testid="estimate-submit" disabled={estimating || job.estimateStatus === 'approved'} onClick={submitEst}>
+              {estimating ? 'Submitting…' : job.estimateStatus === 'approved' ? 'Estimate approved' : 'Submit estimate'}
+            </Button>
+            {job.estimateStatus === 'approved' && (
+              <p className="mt-2 text-xs text-steel-400">Customer has approved. You may now complete the job.</p>
+            )}
+          </div>
+        </Card>
       )}
 
       {mine && next && (
@@ -198,15 +268,15 @@ function JobDetail({ job, uid, demoMode, onDemoUpdate }: { job: ServiceRequest; 
           {next === 'completed' && (
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <Field label="Amount charged (₹, optional)" hint="Recorded on the receipt. Only on completion.">
-                <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 499" inputMode="decimal" />
+                <Input data-testid="job-amount" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 499" inputMode="decimal" />
               </Field>
               <Field label="Minutes on site (optional)">
-                <Input value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="e.g. 25" inputMode="numeric" />
+                <Input data-testid="job-duration" value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="e.g. 25" inputMode="numeric" />
               </Field>
             </div>
           )}
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button disabled={busy} onClick={advance}>{busy ? 'Saving…' : `Mark ${LABEL[next]}`}</Button>
+            <Button data-testid="job-advance" disabled={busy} onClick={advance}>{busy ? 'Saving…' : `Mark ${LABEL[next]}`}</Button>
             {releasable && (
               <Button variant="secondary" onClick={() => setReleasing((v) => !v)}>Release job</Button>
             )}
@@ -235,6 +305,8 @@ export function MechanicJobPage() {
   const uid = user?.uid ?? '';
   const [job, setJob] = useState<ServiceRequest | null | 'loading' | 'missing' | 'error'>('loading');
   const [active, setActive] = useState<ServiceRequest[] | null>(null);
+  const [activeError, setActiveError] = useState(false);
+  const [activeRetry, setActiveRetry] = useState(0);
 
   useEffect(() => {
     if (!id) return;
@@ -254,13 +326,15 @@ export function MechanicJobPage() {
     if (id || !uid) return;
     if (demoMode) {
       setActive(getDemoMechanicActive());
+      setActiveError(false);
       return;
     }
-    const unsub = watchMyActiveJobs(uid, setActive);
+    setActiveError(false);
+    const unsub = watchMyActiveJobs(uid, setActive, () => setActiveError(true));
     return () => {
       if (unsub) unsub();
     };
-  }, [id, uid, demoMode]);
+  }, [id, uid, demoMode, activeRetry]);
 
   return (
     <RequireMechanic>
@@ -271,6 +345,12 @@ export function MechanicJobPage() {
           : job === 'error' ? <ErrorState title="Job unavailable" description="The job could not be loaded. Check your connection and try again." />
           : job === 'missing' || job === null ? <ErrorState title="Job not found" description="It may have been reassigned or you may lack access." />
           : <JobDetail job={job} uid={uid} demoMode={demoMode} onDemoUpdate={setJob} />
+        ) : activeError ? (
+          <ErrorState
+            title="Active-job feed unavailable"
+            description="Your assigned jobs could not be loaded. This is NOT a confirmed 'no active job' result. Check your connection and retry."
+            action={<Button size="sm" variant="secondary" onClick={() => setActiveRetry((n) => n + 1)}>Retry</Button>}
+          />
         ) : active === null ? (
           <LoadingState label="Finding your active job…" />
         ) : active.length === 0 ? (

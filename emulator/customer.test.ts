@@ -175,3 +175,38 @@ describe('customer happy paths (M4 payloads vs M3 rules)', () => {
     await assertFails(setDoc(ref, { id: ref.id, ...payload, problemText: 'hi' }));
   });
 });
+
+describe('deterministic-id create path (browser idempotency flow)', () => {
+  it('denies the missing-doc pre-read but allows the create, then the retry read', async () => {
+    // EXACT client flow of createRequest(uid, r, requestId): the pre-read of
+    // a NONEXISTENT request doc is denied by the read rule (no resource
+    // fields to match), the client treats that as "fresh create", the
+    // create passes, and the retry pre-read of the now-existing doc is
+    // allowed and powers the dedupe check.
+    const db = customerDb();
+    const vehicles = await getDocs(
+      query(collection(db, 'vehicles'), where('ownerId', '==', CUST), limit(1)),
+    );
+    const vehicleId = vehicles.docs[0].id;
+    const ref = doc(db, 'requests', 'm4-deterministic-uuid-probe');
+    await assertFails(getDoc(ref));
+    const payload = buildRequestPayload(CUST, {
+      vehicleId,
+      problemText: 'M4 deterministic retry probe request payload',
+      customerLat: 12.9716,
+      customerLng: 77.5946,
+    });
+    await assertSucceeds(setDoc(ref, { id: ref.id, ...payload }));
+    await assertSucceeds(getDoc(ref));
+    expect((await getDoc(ref)).data()?.status).toBe('requested');
+    // Conflicting retry payload is detectable via the now-allowed read.
+    const second = buildRequestPayload(CUST, {
+      vehicleId,
+      problemText: 'A DIFFERENT problem text on the same retry key',
+      customerLat: 12.9716,
+      customerLng: 77.5946,
+    });
+    // Direct setDoc overwrite is an UPDATE under the rules → denied.
+    await assertFails(setDoc(ref, { id: ref.id, ...second }));
+  });
+});

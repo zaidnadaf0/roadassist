@@ -16,6 +16,7 @@ import {
   buildNewUserProfile,
   homeForHint,
   isProfileHint,
+  resolveAuthHome,
   type ProfileHint,
 } from '@/lib/userProfile';
 
@@ -29,6 +30,8 @@ export interface SignUpInput {
 
 export interface AuthContextValue {
   status: AuthStatus;
+  /** True after the current user's role hint and admin claim have resolved. */
+  authorizationResolved: boolean;
   /** False when no Firebase config is present — auth calls throw a clear error. */
   configured: boolean;
   user: User | null;
@@ -44,7 +47,7 @@ export interface AuthContextValue {
   home: string;
   signUp: (input: SignUpInput) => Promise<void>;
   /** Resolves to the correct portal home after role/claim hints are loaded. */
-  signIn: (email: string, password: string) => Promise<string>;
+  signIn: (email: string, password: string, portal?: 'customer' | 'mechanic' | 'admin') => Promise<string>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   resendVerification: () => Promise<void>;
@@ -63,14 +66,22 @@ const ROLE_TIMEOUT_MS = 8000;
 const DEMO_MODE_KEY = 'roadassist.demoMode';
 
 function initialDemoMode(): boolean {
+  // An EXPLICIT env mode always wins over a stale localStorage preference.
+  // Without this precedence a browser that once enabled demo mode keeps
+  // serving fixtures forever — including during an emulator-verification run
+  // whose whole point is to prove real Firestore writes. That is exactly how
+  // a "live" journey can pass while writing nothing.
+  const explicit = import.meta.env.VITE_ROADASSIST_MODE;
+  if (explicit === 'live') return false;
+  if (explicit === 'demo') return true;
+
   if (typeof window !== 'undefined') {
     const stored = window.localStorage.getItem(DEMO_MODE_KEY);
     if (stored === 'true') return true;
     if (stored === 'false') return false;
   }
-  // Local Vite presentation builds default to the isolated demo environment.
-  // A production build is live-only unless explicitly configured otherwise.
-  return import.meta.env.VITE_ROADASSIST_MODE === 'demo' || (import.meta.env.DEV && import.meta.env.VITE_ROADASSIST_MODE !== 'live');
+  // No explicit mode: local Vite presentation builds default to demo.
+  return import.meta.env.DEV;
 }
 
 function notConfigured(): Error {
@@ -102,8 +113,23 @@ async function readAdminClaim(user: User): Promise<boolean> {
   }
 }
 
+async function hasMechanicRecord(uid: string): Promise<boolean> {
+  try {
+    const db = firebaseDb();
+    if (!db) return false;
+    const snap = await Promise.race([
+      getDoc(doc(db, 'mechanics', uid)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('mechanic-timeout')), ROLE_TIMEOUT_MS)),
+    ]);
+    return snap.exists();
+  } catch {
+    return false;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
+  const [authorizationResolved, setAuthorizationResolved] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [profileRole, setProfileRole] = useState<ProfileHint | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
@@ -129,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const auth = firebaseAuth();
     if (!auth) {
       setStatus('unauthenticated');
+      setAuthorizationResolved(true);
       return;
     }
     return onAuthStateChanged(auth, (u) => {
@@ -137,12 +164,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStatus('unauthenticated');
         setProfileRole(null);
         setIsAdmin(null);
+        setAuthorizationResolved(true);
         return;
       }
       setStatus('authenticated');
-      // Resolve hint + claim without blocking the shell on either.
-      void readProfileRole(u.uid).then(setProfileRole);
-      void readAdminClaim(u).then(setIsAdmin);
+      setAuthorizationResolved(false);
+      // Resolve hint + claim without blocking the shell on either. A stale
+      // resolution must never decorate a NEWER session: on rapid
+      // sign-out/sign-in the previous user's profile/claim promise can
+      // settle after the reset, so each callback re-checks that the
+      // current auth user is still the one it was started for.
+      const uid = u.uid;
+      void Promise.all([readProfileRole(uid), readAdminClaim(u)]).then(([role, admin]) => {
+        if (firebaseAuth()?.currentUser?.uid === uid) {
+          setProfileRole(role);
+          setIsAdmin(admin);
+          setAuthorizationResolved(true);
+        }
+      });
     });
   }, []);
 
@@ -178,7 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string): Promise<string> => {
+  const signIn = useCallback(async (email: string, password: string, portal: 'customer' | 'mechanic' | 'admin' = 'customer'): Promise<string> => {
     const auth = firebaseAuth();
     if (!auth) throw notConfigured();
     try {
@@ -189,7 +228,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ]);
       setProfileRole(role);
       setIsAdmin(admin);
-      return admin ? '/admin' : homeForHint(role);
+      setAuthorizationResolved(true);
+      const mechanicRecord = await hasMechanicRecord(cred.user.uid);
+      return resolveAuthHome(role, admin, portal, mechanicRecord);
     } catch (err) {
       throw new Error(mapAuthError(err), { cause: err });
     }
@@ -242,6 +283,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
+      authorizationResolved,
       configured: firebaseConfigured,
       user,
       emailVerified: user?.emailVerified ?? false,
@@ -258,7 +300,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setDemoMode,
       demoRevision,
     }),
-    [status, user, profileRole, isAdmin, signUp, signIn, signOut, resetPassword, resendVerification, refreshClaim, demoMode, setDemoMode, demoRevision],
+    [status, authorizationResolved, user, profileRole, isAdmin, signUp, signIn, signOut, resetPassword, resendVerification, refreshClaim, demoMode, setDemoMode, demoRevision],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

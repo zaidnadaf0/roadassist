@@ -15,9 +15,9 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
     if (statSync(full).isDirectory()) {
-      if (name === 'node_modules') continue;
+      if (name === 'node_modules' || name === 'lib' || name === 'dist') continue;
       walk(full, out);
-    } else if (/\.(ts|tsx)$/.test(name)) {
+    } else if (/\.(ts|tsx|mjs)$/.test(name)) {
       out.push(full);
     }
   }
@@ -27,8 +27,12 @@ function walk(dir: string, out: string[] = []): string[] {
 const SELF = 'noSecrets.test.ts';
 const KEY_RE = /AIza[0-9A-Za-z\-_]{35}/;
 
+// Every first-party source tree that could hold a pasted credential — not
+// just the SPA (scripts and Cloud Functions handle credentials by design).
+const ROOTS = [import.meta.dirname, join(import.meta.dirname, '..', 'functions', 'src'), join(import.meta.dirname, '..', 'emulator'), join(import.meta.dirname, '..', 'scripts')];
+
 describe('no secrets in source', () => {
-  const files = walk(import.meta.dirname);
+  const files = ROOTS.flatMap((root) => walk(root));
 
   it('scans a non-trivial source tree', () => {
     expect(files.length).toBeGreaterThan(10);

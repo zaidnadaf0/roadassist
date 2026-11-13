@@ -1,11 +1,17 @@
 import { Component, type ReactNode } from 'react';
-import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet';
+import { CircleMarker, MapContainer, Marker, Popup, Polyline, TileLayer, Tooltip, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import { DEFAULT_CENTER, DEFAULT_ZOOM, TILE_ATTRIBUTION, TILE_URL } from '@/lib/mapProvider';
+import { DEFAULT_CENTER, DEFAULT_ZOOM, TILE_ATTRIBUTION, TILE_URL, isValidLatLng } from '@/lib/mapProvider';
 
 /**
  * M7 modular map. CircleMarkers (no image assets → no broken-icon problem).
- * Tones distinguish roles: azure = customer/you, aqua = mechanic.
+ * Tones distinguish roles on the dark canvas: azure = customer/you (electric
+ * purple), aqua = mechanic (teal), neutral = other.
+ *
+ * Every coordinate prop is sanitized before reaching Leaflet: Firestore
+ * documents are not trusted for map purposes, so missing/non-finite/
+ * out-of-range values are dropped (or fall back to the default center)
+ * instead of rendering NaN geometry.
  */
 
 export interface MapPin {
@@ -23,17 +29,44 @@ interface MapViewProps {
   userLabel?: string;
   mechanicMarkers?: MapPin[];
   line?: [number, number][] | null;
+  /** Optional click handler for pin-selection mode. Receives [lat, lng]. */
+  onPinClick?: (position: [number, number]) => void;
 }
 
 const TONE: Record<NonNullable<MapPin['tone']>, { color: string; fill: string }> = {
-  azure: { color: '#3b7dff', fill: '#3b7dff' },
-  aqua: { color: '#14b8a6', fill: '#14b8a6' },
-  neutral: { color: '#8a919c', fill: '#8a919c' },
+  azure: { color: '#A855F7', fill: '#A855F7' },
+  aqua: { color: '#2DD4BF', fill: '#2DD4BF' },
+  neutral: { color: '#A1A1AA', fill: '#A1A1AA' },
 };
 
-function InnerMap({ center = DEFAULT_CENTER, zoom = DEFAULT_ZOOM, className, userPosition, userLabel, mechanicMarkers = [], line }: MapViewProps) {
+type SanitizedMapProps = Omit<MapViewProps, 'center' | 'userPosition' | 'mechanicMarkers' | 'line'> & {
+  center: [number, number];
+  userPosition: [number, number] | null;
+  mechanicMarkers: MapPin[];
+  line: [number, number][];
+  onPinClick?: (position: [number, number]) => void;
+}
+
+function sanitizeMapProps(props: MapViewProps): SanitizedMapProps {
+  const center = props.center && isValidLatLng(props.center[0], props.center[1]) ? props.center : DEFAULT_CENTER;
+  const userPosition = props.userPosition && isValidLatLng(props.userPosition[0], props.userPosition[1]) ? props.userPosition : null;
+  const mechanicMarkers = (props.mechanicMarkers ?? []).filter((m) => isValidLatLng(m.position[0], m.position[1]));
+  const line: [number, number][] = (props.line ?? []).filter((pt) => isValidLatLng(pt[0], pt[1]));
+  return { center, userPosition, mechanicMarkers, line, zoom: props.zoom, className: props.className, userLabel: props.userLabel, onPinClick: props.onPinClick };
+}
+
+function MapClicker(props: { onPinClick: (position: [number, number]) => void }) {
+  useMapEvents({
+    click: (e) => props.onPinClick([e.latlng.lat, e.latlng.lng]),
+  });
+  return null;
+}
+
+function InnerMap(props: MapViewProps) {
+  const { center, zoom = DEFAULT_ZOOM, className, userPosition, userLabel, mechanicMarkers, line, onPinClick } = sanitizeMapProps(props);
   return (
     <MapContainer center={center} zoom={zoom} scrollWheelZoom className={className ?? 'aspect-[16/10] w-full rounded-xl'} attributionControl>
+      {onPinClick && <MapClicker onPinClick={onPinClick} />}
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />
       {userPosition && (
         <CircleMarker center={userPosition} radius={10} pathOptions={{ color: TONE.azure.color, fillColor: TONE.azure.fill, fillOpacity: 0.85, weight: 3 }}>
@@ -48,7 +81,8 @@ function InnerMap({ center = DEFAULT_CENTER, zoom = DEFAULT_ZOOM, className, use
           </CircleMarker>
         );
       })}
-      {line && line.length >= 2 && <Polyline positions={line} pathOptions={{ color: '#f94e10', weight: 3, dashArray: '8 6' }} />}
+      {line.length >= 2 && <Polyline positions={line} pathOptions={{ color: '#A855F7', weight: 3, dashArray: '8 6' }} />}
+      {onPinClick && <Marker position={center}><Popup>Click map to select your location</Popup></Marker>}
     </MapContainer>
   );
 }

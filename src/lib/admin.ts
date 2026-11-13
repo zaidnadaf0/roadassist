@@ -29,6 +29,7 @@ export interface AdminUser {
   displayName?: string;
   phone?: string | null;
   role?: string;
+  createdAt?: unknown;
 }
 
 export interface AdminMechanic {
@@ -60,6 +61,12 @@ export interface AdminRequest {
   cancelledBy?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
+  offerExpiresAt?: unknown;
+  /** Demo-only presentation fields. Live request documents do not populate these. */
+  demoCustomerName?: string;
+  demoVehicleType?: string;
+  demoLocation?: string;
+  demoResponseMinutes?: number;
 }
 
 function requireDb(): Firestore {
@@ -184,6 +191,30 @@ export async function listAllRequestsOnce(status: RequestStatus | 'all' = 'all',
   return snap.docs.map((s) => asRequest(s.id, s.data())).filter((r): r is AdminRequest => r !== null);
 }
 
+const LIVE_STATUSES: RequestStatus[] = ['accepted', 'on-the-way', 'arrived', 'service'];
+
+/**
+ * Live (assigned, in-progress) requests across the network. Queries the
+ * status set server-side instead of filtering a capped 'all' read, so an
+ * active job can never be pushed out of view by newer unrelated requests.
+ * Uses the existing (status ASC, createdAt DESC) composite index.
+ */
+export function watchActiveRequests(cb: (items: AdminRequest[]) => void, max = 50, onError?: (e: Error) => void): Unsubscribe | null {
+  try {
+    const d = requireDb();
+    return onSnapshot(
+      query(collection(d, 'requests'), where('status', 'in', LIVE_STATUSES), orderBy('createdAt', 'desc'), limit(max)),
+      (snap) => cb(snap.docs.map((s) => asRequest(s.id, s.data())).filter((r): r is AdminRequest => r !== null)),
+      (err) => {
+        cb([]);
+        onError?.(err as Error);
+      },
+    );
+  } catch {
+    return null;
+  }
+}
+
 export interface AdminOfferRow {
   requestId: string;
   mechanicId: string;
@@ -262,6 +293,7 @@ export interface DashboardStats {
   mechanicsPending: number | null;
   mechanicsApproved: number | null;
   mechanicsSuspended: number | null;
+  mechanicsAvailable: number | null;
 }
 
 /**
@@ -276,14 +308,18 @@ export function computeStats(
   const byStatus: Partial<Record<RequestStatus, number>> = {};
   for (const r of requests) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
   const active =
-    (byStatus.requested ?? 0) + (byStatus.accepted ?? 0) + (byStatus['on-the-way'] ?? 0) + (byStatus.arrived ?? 0) + (byStatus.service ?? 0);
+    (byStatus.accepted ?? 0) + (byStatus['on-the-way'] ?? 0) + (byStatus.arrived ?? 0) + (byStatus.service ?? 0);
   let mechanicsPending = 0;
   let mechanicsApproved = 0;
   let mechanicsSuspended = 0;
+  let mechanicsAvailable = 0;
   if (mechanics) {
     for (const m of mechanics) {
       if (m.verificationStatus === 'pending' || m.verificationStatus === 'under_review') mechanicsPending++;
-      if (m.approved && m.verificationStatus !== 'suspended') mechanicsApproved++;
+      if (m.approved && m.verificationStatus !== 'suspended') {
+        mechanicsApproved++;
+        if (m.isAvailable) mechanicsAvailable++;
+      }
       if (m.verificationStatus === 'suspended') mechanicsSuspended++;
     }
   }
@@ -298,5 +334,94 @@ export function computeStats(
     mechanicsPending: mechanics ? mechanicsPending : null,
     mechanicsApproved: mechanics ? mechanicsApproved : null,
     mechanicsSuspended: mechanics ? mechanicsSuspended : null,
+    mechanicsAvailable: mechanics ? mechanicsAvailable : null,
+  };
+}
+
+/* ---------------- mechanic states + operational exceptions ---------------- */
+
+export interface MechanicStates {
+  pending: number;
+  underReview: number;
+  approved: number;
+  suspended: number;
+  rejected: number;
+  approvedAvailable: number;
+  approvedUnavailable: number;
+}
+
+/** Approval/availability breakdown over a bounded roster. Pure — tested. */
+export function mechanicStates(mechanics: AdminMechanic[]): MechanicStates {
+  const out: MechanicStates = {
+    pending: 0, underReview: 0, approved: 0, suspended: 0, rejected: 0,
+    approvedAvailable: 0, approvedUnavailable: 0,
+  };
+  for (const m of mechanics) {
+    switch (m.verificationStatus) {
+      case 'pending': out.pending++; break;
+      case 'under_review': out.underReview++; break;
+      case 'suspended': out.suspended++; break;
+      case 'rejected': out.rejected++; break;
+      default: break;
+    }
+    if (m.approved && m.verificationStatus !== 'suspended') {
+      out.approved++;
+      if (m.isAvailable) out.approvedAvailable++;
+      else out.approvedUnavailable++;
+    }
+  }
+  return out;
+}
+
+export interface AdminExceptions {
+  /** Open requests whose offer window has passed without assignment. */
+  staleOpen: AdminRequest[];
+  /** Jobs live for more than STALE_ACTIVE_HOURS without completing. */
+  longActive: AdminRequest[];
+  /** Mechanics blocked from work (suspended/rejected). */
+  blockedMechanics: AdminMechanic[];
+}
+
+const STALE_OPEN_MS = 10 * 60_000; // several offer windows + rematches
+const LONG_ACTIVE_MS = 24 * 60 * 60_000;
+
+function toMs(ts: unknown): number | null {
+  if (ts == null) return null;
+  if (typeof ts === 'number') return ts;
+  if (typeof ts === 'string') {
+    const parsed = Date.parse(ts);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof ts === 'object' && ts !== null && 'toMillis' in ts && typeof (ts as { toMillis?: unknown }).toMillis === 'function') {
+    return (ts as { toMillis: () => number }).toMillis();
+  }
+  return null;
+}
+
+/**
+ * Operational exceptions over the bounded dashboard window: unmatched open
+ * requests past their offer window, suspiciously long active jobs, and
+ * blocked mechanics. Capped per list for display. Pure — tested.
+ */
+export function findExceptions(requests: AdminRequest[], mechanics: AdminMechanic[], nowMs: number, cap = 5): AdminExceptions {
+  const staleOpen: AdminRequest[] = [];
+  const longActive: AdminRequest[] = [];
+  for (const r of requests) {
+    const created = toMs(r.createdAt);
+    if (r.status === 'requested') {
+      const expiry = toMs(r.offerExpiresAt);
+      const ageOk = created != null && nowMs - created > STALE_OPEN_MS;
+      const expiredOk = expiry != null && expiry < nowMs;
+      // Either the offer window expired, or (no expiry recorded) the request
+      // has been sitting open well past any window.
+      if (expiredOk || (expiry == null && ageOk)) staleOpen.push(r);
+    } else if (['accepted', 'on-the-way', 'arrived', 'service'].includes(r.status)) {
+      if (created != null && nowMs - created > LONG_ACTIVE_MS) longActive.push(r);
+    }
+  }
+  return {
+    staleOpen: staleOpen.slice(0, cap),
+    longActive: longActive.slice(0, cap),
+    blockedMechanics: mechanics.filter((m) => m.verificationStatus === 'suspended' || m.verificationStatus === 'rejected').slice(0, cap),
   };
 }

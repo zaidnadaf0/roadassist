@@ -1,9 +1,21 @@
 import type { Config } from 'tailwindcss';
 
 /**
- * RoadAssist design tokens. The visual system uses clean pearl-white
- * claymorphism: soft raised surfaces, inset controls, slate text and
- * lavender/indigo actions across every portal.
+ * RoadAssist design tokens — "Midnight Navy + Warm Amber".
+ *
+ * The token NAMES are the public contract every page already uses (cream =
+ * primary text, graphite = surfaces, grease = page ground, safety = accent,
+ * steel = secondary text, line = borders). Only the VALUES are re-pointed, so
+ * one theme change reaches every portal without per-page duplication.
+ *
+ * Palette (locked):
+ *   page   #17251D   card   #1A202B   elevated #263236
+ *   accent #D993EA   hover  #E8A267   text     #212B36
+ *   muted  #8899A3   border #4A4A5A
+ *
+ * Semantic colour families (success / warning / danger) stay distinct from the
+ * purple accent so status is never conveyed by colour alone — every use also
+ * carries a label or an icon.
  */
 const v = (name: string) => `rgb(var(${name}) / <alpha-value>)`;
 
@@ -12,47 +24,55 @@ export default {
   theme: {
     extend: {
       colors: {
+        /** Inputs, code blocks, inset wells. */
         grease: {
-          DEFAULT: '#F1F4F8',
-          soft: '#E8EDF4',
+          DEFAULT: '#17253D',
+          soft: '#1A202E',
         },
+        /** Surfaces: cards, hover states, scaffold panels. */
         graphite: {
-          DEFAULT: '#F7F9FC',
-          soft: '#E9EEF5',
-          card: '#FBFCFE',
-          hover: '#E1E7F0',
+          DEFAULT: '#1A202E',
+          soft: '#263236',
+          card: '#1A202B',
+          hover: '#293E5E',
         },
+        /** Primary accent — Warm Amber. */
         safety: {
-          50: '#F2F4FF',
-          100: '#E5E9FF',
-          200: '#CBD3FF',
-          300: '#AAB7FF',
-          400: '#8493F1',
-          500: '#6978D9',
-          600: '#5968C5',
-          700: '#4A57A8',
-          800: '#3D488A',
-          900: '#30396C',
+          50: '#FFF9E5',
+          100: '#F2F0E0',
+          200: '#D5C4C0',
+          300: '#C298A8',
+          400: '#D99532',
+          500: '#D99532',
+          600: '#B8860B',
+          700: '#97730A',
+          800: '#866708',
+          900: '#5C4A08',
         },
-        // Backward-compatible alias for legacy auth/marketing classes.
-        brand: '#6978D9',
+        /** Backward-compatible alias for legacy auth/marketing classes. */
+        brand: '#D99532',
+        /** Primary + secondary type. */
         cream: {
-          DEFAULT: '#1D293B',
-          dim: '#4C5A70',
+          DEFAULT: '#F4F1EA',
+          dim: '#A1A1AA',
         },
         steel: {
-          300: '#536177',
-          400: '#718096',
-          500: '#97A3B6',
+          300: '#C0C2D0',
+          400: '#A1A1AA',
+          500: '#8A8A95',
         },
         line: {
-          soft: '#D9E0EA',
-          strong: '#C0CAD8',
+          soft: '#4A5568',
+          strong: '#4A5568',
         },
-        success: { DEFAULT: '#3F9B76' },
-        warning: { DEFAULT: '#C9874A' },
-        danger: { DEFAULT: '#C65F70' },
-        // Channel-based surfaces for opacity modifiers (bg-graphite-soft/60).
+        success: { DEFAULT: '#38A752' },
+        warning: { DEFAULT: '#F5A524' },
+        danger: {
+          DEFAULT: '#F87171',
+          /** Filled red surfaces that carry white text (pills, solid buttons). */
+          solid: '#DC2626',
+        },
+        /** Channel-based surfaces for opacity modifiers (bg-graphite-soft/60). */
         surface: {
           1: v('--ra-surface-1'),
           2: v('--ra-surface-2'),
@@ -63,18 +83,20 @@ export default {
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
       borderRadius: {
-        sm: '8px',
-        md: '12px',
-        lg: '14px',
-        xl: '16px',
-        '2xl': '20px',
+        sm: '6px',
+        md: '8px',
+        lg: '10px',
+        xl: '12px',
+        '2xl': '12px',
       },
       boxShadow: {
-        card: '12px 14px 28px rgb(149 161 181 / 0.28), -9px -9px 22px rgb(255 255 255 / 0.92)',
-        clay: '12px 14px 28px rgb(149 161 181 / 0.28), -9px -9px 22px rgb(255 255 255 / 0.92)',
-        'clay-sm': '7px 8px 16px rgb(149 161 181 / 0.22), -5px -5px 12px rgb(255 255 255 / 0.90)',
-        'clay-inset': 'inset 5px 5px 10px rgb(175 187 204 / 0.28), inset -5px -5px 10px rgb(255 255 255 / 0.90)',
-        glow: '0 8px 20px rgb(105 120 217 / 0.22), 0 0 30px rgb(105 120 217 / 0.12)',
+        /** Dark elevation: a hairline lift plus a deep ambient shadow. */
+        card: '0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px -8px rgb(0 0 0 / 0.9)',
+        clay: '0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px -8px rgb(0 0 0 / 0.9)',
+        'clay-sm': '0 1px 2px rgb(0 0 0 / 0.3), 0 8px 20px -4px rgb(0 0 0 / 0.85)',
+        'clay-inset': 'inset 0 1px 2px rgb(0 0 0 / 0.45)',
+        /** Warm amber accent for primary actions only. */
+        glow: '0 8px 20px -8px rgb(217 149 0 / 0.55), 0 0 0 1px rgb(217 149 0 / 0.18)',
       },
     },
   },

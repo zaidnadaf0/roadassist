@@ -5,6 +5,7 @@ import { Icon, type IconName } from '@/components/Icon';
 import { Badge, Button, Card, DemoNotice, EmptyState, ErrorState, LoadingState, MetricCard, PageHeader, SectionHeading } from '@/components/ui';
 import { listVehicles, watchMyRequests, watchPublicMechanics, type PublicMechanic, type ServiceRequest, type Vehicle } from '@/lib/customer';
 import { DEMO_CUSTOMER_PROFILE, DEMO_CUSTOMER_VEHICLES, FIXTURE_SERVICES, getDemoCustomerRequests } from '@/lib/fixtures';
+import { requestRef } from '@/lib/reference';
 
 const LIVE = ['requested', 'accepted', 'on-the-way', 'arrived', 'service'];
 const STATUS_STEPS = [
@@ -33,6 +34,7 @@ export function CustomerDashboard() {
   const { demoMode, setDemoMode, user } = useAuth();
   const [requests, setRequests] = useState<ServiceRequest[] | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
+  const [vehiclesError, setVehiclesError] = useState(false);
   const [mechanics, setMechanics] = useState<PublicMechanic[]>([]);
   const [feedError, setFeedError] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -57,22 +59,31 @@ export function CustomerDashboard() {
     if (!uid) return;
     if (demoMode) {
       setVehicles(DEMO_CUSTOMER_VEHICLES.filter((item) => item.ownerId === 'demo-customer'));
+      setVehiclesError(false);
       return;
     }
     let cancelled = false;
     setVehicles(null);
+    setVehiclesError(false);
     listVehicles(uid).then((items) => {
       if (!cancelled) setVehicles(items);
     }).catch(() => {
-      if (!cancelled) setVehicles([]);
+      // Surface the failure distinctly — a rules/network error must not
+      // read as "no vehicles".
+      if (!cancelled) { setVehicles([]); setVehiclesError(true); }
     });
     return () => { cancelled = true; };
   }, [uid, retry, demoMode]);
 
   useEffect(() => {
+    // Demo mode never needs a live projection listener; skip the wasted read.
+    if (demoMode) {
+      setMechanics([]);
+      return;
+    }
     const unsub = watchPublicMechanics(setMechanics, () => setMechanics([]), 100);
     return () => { if (unsub) unsub(); };
-  }, []);
+  }, [demoMode]);
 
   const usingDemo = demoMode;
   const displayRequests = usingDemo ? getDemoCustomerRequests() : (requests ?? []);
@@ -80,18 +91,16 @@ export function CustomerDashboard() {
   const recent = displayRequests.filter((r) => !LIVE.includes(r.status)).slice(0, 4);
   const completed = displayRequests.filter((r) => r.status === 'completed');
   const availableMechanics = usingDemo ? 3 : mechanics.filter((m) => m.isAvailable && m.approved).length;
-  const vehicleCount = usingDemo ? 2 : (vehicles?.length ?? 0);
-  const amountSpent = completed.reduce((total, item) => total + (item.amountCents ?? 0), 0);
+  const vehicleCount = usingDemo ? 2 : (vehicles?.length ?? 0);  const amountSpent = completed.reduce((total, item) => total + (item.amountCents ?? 0), 0);
   const greetingName = demoMode ? DEMO_CUSTOMER_PROFILE.displayName : user?.displayName;
   const activeStep = active ? Math.max(0, STATUS_STEPS.findIndex((step) => step.status === active.status)) : -1;
   const vehicle = active && vehicles ? vehicles.find((item) => item.id === active.vehicleId) : null;
 
   const quickActions = useMemo(() => [
-    { to: '/services', label: 'Request roadside help', detail: 'Start a new rescue', icon: 'wrench' },
-    { to: '/track', label: 'Track active request', detail: active ? 'View current status' : 'No active request', icon: 'route' },
     { to: '/vehicles', label: 'Manage vehicles', detail: `${vehicleCount} registered`, icon: 'car' },
-    { to: '/guide', label: 'Open mechanic guide', detail: 'Get safe first steps', icon: 'info' },
-  ], [active, vehicleCount]);
+    { to: '/history', label: 'Service history', detail: 'Receipts and ratings', icon: 'history' },
+    { to: '/guide', label: 'Mechanic guide', detail: 'Safe first steps', icon: 'info' },
+  ], [vehicleCount]);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -112,24 +121,53 @@ export function CustomerDashboard() {
           <section>
             <SectionHeading title="At a glance" description="Your most important roadside information, updated from your account." />
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricCard icon="route" label="Current rescue" value={active ? active.status.replace('-', ' ') : 'None'} helper={active ? `${active.mechanicName ?? 'Matching a mechanic'} · #${active.id.slice(-6).toUpperCase()}` : 'You are ready to request help'} tone={active ? 'brand' : 'neutral'} />
+              <MetricCard icon="route" label="Current rescue" value={active ? active.status.replace('-', ' ') : 'None'} helper={active ? `${active.mechanicName ?? 'Matching a mechanic'} · ${requestRef(active.id)}` : 'You are ready to request help'} tone={active ? 'brand' : 'neutral'} />
               <MetricCard icon="users" label="Nearby mechanics" value={String(availableMechanics)} helper="Approved and currently available" tone="success" />
-              <MetricCard icon="car" label="Your vehicles" value={String(vehicleCount)} helper={vehicleCount ? 'Ready for a roadside request' : 'Add a vehicle to get started'} tone={vehicleCount ? 'brand' : 'warning'} />
+              <MetricCard icon="car" label="Your vehicles" value={vehiclesError ? '—' : String(vehicleCount)} helper={vehiclesError ? 'Vehicle list unavailable — retry from the vehicles page' : vehicleCount ? 'Ready for a roadside request' : 'Add a vehicle to get started'} tone={vehicleCount && !vehiclesError ? 'brand' : 'warning'} />
               <MetricCard icon="history" label="Completed services" value={String(completed.length)} helper={amountSpent ? `₹${(amountSpent / 100).toFixed(0)} recorded total` : 'Your completed services appear here'} tone="neutral" />
+            </div>
+          </section>
+
+          <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-safety-500/25 bg-gradient-to-r from-safety-500/12 via-graphite-card to-graphite-card px-4 py-3.5">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-cream">
+                {active ? `Rescue in progress — ${active.status.replace(/-/g, ' ')}` : 'Need roadside help right now?'}
+              </p>
+              <p className="mt-0.5 text-xs text-steel-400">
+                {active
+                  ? `${active.mechanicName ?? 'Matching you with a mechanic'} · ${requestRef(active.id)}`
+                  : 'Pick a service, confirm your location, and we dispatch the nearest verified mechanic.'}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {active && (
+                <Link to={`/track/${active.id}`}>
+                  <Button size="sm">Track rescue</Button>
+                </Link>
+              )}
+              <Link to="/request">
+                <Button size="sm" variant={active ? 'secondary' : 'primary'}>{active ? 'New request' : 'Request help'}</Button>
+              </Link>
             </div>
           </section>
 
           <section>
             <SectionHeading title="What would you like to do?" description="Common actions are one tap away." />
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-3">
               {quickActions.map((action) => (
-                <Link key={action.to} to={action.to} className="group rounded-2xl border border-line-soft bg-graphite-card p-4 shadow-card transition hover:-translate-y-0.5 hover:border-safety-500/50">
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="clay-inset grid h-10 w-10 place-items-center rounded-2xl border border-safety-500/20 bg-safety-500/10 text-safety-300"><Icon name={action.icon as IconName} size={19} /></span>
-                    <span className="text-lg text-steel-500 transition group-hover:translate-x-1 group-hover:text-safety-400">→</span>
-                  </div>
-                  <p className="mt-4 font-semibold text-cream">{action.label}</p>
-                  <p className="mt-1 text-xs text-steel-400">{action.detail}</p>
+                <Link
+                  key={action.to}
+                  to={action.to}
+                  className="group flex items-center gap-3 rounded-xl border border-line-soft bg-graphite-card px-3 py-2.5 transition-colors hover:border-safety-500/50 hover:bg-graphite-hover/40"
+                >
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-safety-500/20 bg-safety-500/10 text-safety-300">
+                    <Icon name={action.icon as IconName} size={16} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-cream">{action.label}</span>
+                    <span className="block truncate text-[11px] text-steel-500">{action.detail}</span>
+                  </span>
+                  <Icon name="arrowRight" size={14} className="ml-auto shrink-0 text-steel-500 transition-transform group-hover:translate-x-0.5 group-hover:text-safety-400" />
                 </Link>
               ))}
             </div>
@@ -149,9 +187,9 @@ export function CustomerDashboard() {
                 <>
                   <div className="mt-6 grid grid-cols-5 gap-1">
                     {STATUS_STEPS.map((step, index) => (
-                      <div key={step.status}>
+                      <div key={step.status} className="min-w-0">
                         <div className={`h-1.5 rounded-full ${index <= activeStep ? 'bg-safety-500' : 'bg-graphite-soft'}`} />
-                        <p className={`mt-2 text-[10px] ${index <= activeStep ? 'text-cream' : 'text-steel-500'}`}>{step.label}</p>
+                        <p className={`mt-2 break-words text-[10px] leading-tight ${index <= activeStep ? 'text-cream' : 'text-steel-400'}`}>{step.label}</p>
                       </div>
                     ))}
                   </div>
@@ -179,11 +217,11 @@ export function CustomerDashboard() {
           <section className="grid gap-4 lg:grid-cols-2">
             <Card>
               <SectionHeading title="Recent activity" description="Your latest service records." action={<Link to="/history" className="text-xs font-medium text-safety-400 hover:text-safety-300">View history →</Link>} />
-              {recent.length === 0 ? <EmptyState title="No past services yet" description="Completed rescues and receipts will appear here after your first service." /> : <ul className="divide-y divide-line-soft">{recent.map((request) => <li key={request.id} className="flex items-center justify-between gap-3 py-3 first:pt-0"><div className="min-w-0"><p className="truncate text-sm font-semibold text-cream">{request.problemText}</p><p className="mt-1 text-xs text-steel-500">{dateLabel(request.updatedAt ?? request.createdAt)} · #{request.id.slice(-6).toUpperCase()}</p></div><Link to={`/history/${request.id}`}><Badge tone={statusTone(request.status)}>{request.status}</Badge></Link></li>)}</ul>}
+              {recent.length === 0 ? <EmptyState title="No past services yet" description="Completed rescues and receipts will appear here after your first service." /> : <ul className="divide-y divide-line-soft">{recent.map((request) => <li key={request.id} className="flex items-center justify-between gap-3 py-3 first:pt-0"><div className="min-w-0"><p className="truncate text-sm font-semibold text-cream">{request.problemText}</p><p className="mt-1 text-xs text-steel-500">{dateLabel(request.updatedAt ?? request.createdAt)} · {requestRef(request.id)}</p></div><Link to={`/history/${request.id}`}><Badge tone={statusTone(request.status)}>{request.status}</Badge></Link></li>)}</ul>}
             </Card>
             <Card>
               <SectionHeading title="Popular services" description="Catalogue guidance only; final charges come from the completed record." action={<Link to="/services" className="text-xs font-medium text-safety-400 hover:text-safety-300">See all →</Link>} />
-              <div className="grid gap-2 sm:grid-cols-2">{FIXTURE_SERVICES.slice(0, 4).map((service) => <Link key={service.id} to={`/request?service=${service.id}`} className="rounded-xl border border-line-soft bg-graphite-soft/40 p-3 transition hover:border-safety-500/40"><p className="text-sm font-semibold text-cream">{service.name}</p><p className="mt-1 text-xs text-steel-400">From ₹{service.base} · {service.eta}</p></Link>)}</div>
+              <div className="grid gap-2 sm:grid-cols-2">{FIXTURE_SERVICES.slice(0, 4).map((service) => <Link key={service.id} to={`/request?service=${service.id}&category=${service.category}`} className="rounded-xl border border-line-soft bg-graphite-soft/40 p-3 transition hover:border-safety-500/40"><p className="text-sm font-semibold text-cream">{service.name}</p><p className="mt-1 text-xs text-steel-400">From ₹{service.base} · {service.eta}</p></Link>)}</div>
             </Card>
           </section>
         </div>
